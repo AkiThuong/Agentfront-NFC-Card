@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NFC Card Reader - CCCD / Zairyu</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+        }
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+        h1 {
+            text-align: center;
+            color: #1a1a2e;
+            margin-bottom: 5px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 25px;
+            font-size: 14px;
+        }
+        
+        /* Status Bar */
+        .status-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .status-bar.disconnected { background: #fee2e2; color: #991b1b; }
+        .status-bar.disconnected .status-dot { background: #ef4444; }
+        .status-bar.connected { background: #d1fae5; color: #065f46; }
+        .status-bar.connected .status-dot { background: #10b981; }
+        .status-bar.waiting { background: #fef3c7; color: #92400e; }
+        .status-bar.waiting .status-dot { background: #f59e0b; animation: pulse 1s infinite; }
+        .status-bar.reading { background: #dbeafe; color: #1e40af; }
+        .status-bar.reading .status-dot { background: #3b82f6; animation: pulse 0.5s infinite; }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        
+        /* Card Type Tabs */
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .tab {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #e5e7eb;
+            border-radius: 10px;
+            background: white;
+            cursor: pointer;
+            text-align: center;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        .tab:hover { border-color: #3b82f6; }
+        .tab.active {
+            background: #3b82f6;
+            color: white;
+            border-color: #3b82f6;
+        }
+        .tab .icon { font-size: 24px; display: block; margin-bottom: 5px; }
+        
+        /* Form */
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: 600;
+            color: #374151;
+            font-size: 14px;
+        }
+        input {
+            width: 100%;
+            padding: 12px 14px;
+            font-size: 16px;
+            border: 2px solid #e5e7eb;
+            border-radius: 10px;
+            transition: border-color 0.3s;
+        }
+        input:focus {
+            outline: none;
+            border-color: #3b82f6;
+        }
+        input::placeholder {
+            color: #9ca3af;
+        }
+        .input-hint {
+            font-size: 12px;
+            color: #6b7280;
+            margin-top: 4px;
+        }
+        
+        /* Buttons */
+        button {
+            width: 100%;
+            padding: 14px;
+            font-size: 16px;
+            font-weight: 600;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+            color: white;
+        }
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(59, 130, 246, 0.4);
+        }
+        .btn-primary:disabled {
+            background: #d1d5db;
+            cursor: not-allowed;
+        }
+        .btn-secondary {
+            background: #f3f4f6;
+            color: #374151;
+            margin-top: 10px;
+        }
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+            margin-top: 10px;
+        }
+        
+        /* Scan Animation */
+        .scan-area {
+            text-align: center;
+            padding: 40px 20px;
+            display: none;
+        }
+        .scan-area.active { display: block; }
+        .nfc-icon {
+            font-size: 80px;
+            animation: float 2s ease-in-out infinite;
+        }
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-15px); }
+        }
+        
+        /* Results */
+        .result-area {
+            display: none;
+        }
+        .result-area.show { display: block; }
+        .result-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .result-header h3 { color: #065f46; }
+        .result-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px;
+            background: #f9fafb;
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+        .result-label { color: #6b7280; font-size: 14px; }
+        .result-value { 
+            font-weight: 600; 
+            color: #111827; 
+            word-break: break-all;
+            text-align: right;
+            max-width: 60%;
+        }
+        
+        /* Error */
+        .error-msg {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 12px 16px;
+            border-radius: 10px;
+            margin-top: 15px;
+            display: none;
+            font-size: 14px;
+            white-space: pre-line;
+            line-height: 1.5;
+        }
+        .error-msg.show { display: block; }
+        
+        /* Log */
+        .log-card {
+            background: #1f2937;
+            border-radius: 12px;
+            padding: 15px;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+        .log-card pre {
+            color: #10b981;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            margin: 0;
+            white-space: pre-wrap;
+        }
+        
+        /* Hidden */
+        .hidden { display: none !important; }
+        
+        /* Result highlights */
+        .result-value.highlight {
+            color: #059669;
+            font-size: 16px;
+            font-weight: 700;
+        }
+        
+        /* My Number specific styling */
+        .result-item:has(.result-value.highlight) {
+            background: #ecfdf5;
+            border: 1px solid #a7f3d0;
+        }
+        
+        /* Tabs responsive */
+        .tabs {
+            flex-wrap: wrap;
+        }
+        .tab {
+            min-width: 70px;
+            font-size: 12px;
+        }
+        .tab .icon {
+            font-size: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h1>📡 NFC Card Reader</h1>
+            <p class="subtitle">Suica • マイナンバー • 在留カード • CCCD • Generic</p>
+            
+            <!-- Status -->
+            <div id="statusBar" class="status-bar disconnected">
+                <div class="status-dot"></div>
+                <span id="statusText">Connecting...</span>
+            </div>
+            
+            <!-- Card Type Selector -->
+            <div class="tabs" id="tabsContainer">
+                <div class="tab active" data-type="generic">
+                    <span class="icon">💳</span>
+                    Generic
+                </div>
+                <div class="tab" data-type="suica">
+                    <span class="icon">🚃</span>
+                    Suica
+                </div>
+                <div class="tab" data-type="mynumber">
+                    <span class="icon">🪪</span>
+                    マイナンバー
+                </div>
+                <div class="tab" data-type="zairyu">
+                    <span class="icon">🛂</span>
+                    在留カード
+                </div>
+                <div class="tab" data-type="cccd">
+                    <span class="icon">🇻🇳</span>
+                    CCCD
+                </div>
+            </div>
+            
+            <!-- Generic Form -->
+            <div id="formGeneric" class="form-container">
+                <p style="color: #6b7280; text-align: center; padding: 20px 0;">
+                    No input required for generic cards.<br>
+                    Just place your card on the reader.
+                </p>
+                <button id="scanGenericBtn" class="btn-primary">
+                    🔍 Scan Card
+                </button>
+            </div>
+            
+            <!-- CCCD Form -->
+            <div id="formCCCD" class="form-container hidden">
+                <div class="form-group">
+                    <label>Số CCCD (Card Number)</label>
+                    <input type="text" id="cccdNumber" placeholder="001234567890" maxlength="12">
+                    <div class="input-hint">12 số trên mặt trước thẻ</div>
+                </div>
+                <div class="form-group">
+                    <label>Ngày sinh (Date of Birth)</label>
+                    <input type="text" id="cccdBirth" placeholder="YYMMDD (vd: 900115)">
+                    <div class="input-hint">Năm-Tháng-Ngày: 900115 = 15/01/1990</div>
+                </div>
+                <div class="form-group">
+                    <label>Ngày hết hạn (Expiry Date)</label>
+                    <input type="text" id="cccdExpiry" placeholder="YYMMDD (vd: 350115)">
+                    <div class="input-hint">Năm-Tháng-Ngày: 350115 = 15/01/2035</div>
+                </div>
+                <button id="scanCCCDBtn" class="btn-primary">
+                    🔍 Quét thẻ CCCD
+                </button>
+            </div>
+            
+            <!-- My Number Form -->
+            <div id="formMyNumber" class="form-container hidden">
+                <div class="form-group">
+                    <label>券面入力補助用PIN (4桁)</label>
+                    <input type="password" id="mynumberPin" placeholder="****" maxlength="4">
+                    <div class="input-hint">市役所で設定した4桁の暗証番号</div>
+                </div>
+                <div style="background: #d1fae5; padding: 12px; border-radius: 8px; margin-bottom: 10px; font-size: 13px; color: #065f46;">
+                    <strong>📋 PINを入力すると読み取れる情報:</strong><br>
+                    • 個人番号 (マイナンバー12桁)<br>
+                    • 氏名・住所・生年月日・性別
+                </div>
+                <div style="background: #fef3c7; padding: 12px; border-radius: 8px; margin-bottom: 15px; font-size: 13px; color: #92400e;">
+                    ⚠️ PINを3回間違えるとカードがロックされます（市役所で解除）
+                </div>
+                <button id="scanMyNumberBtn" class="btn-primary">
+                    🔍 個人情報を読み取る
+                </button>
+                <button id="scanMyNumberNoPinBtn" class="btn-secondary">
+                    PIN無しで証明書情報のみ確認
+                </button>
+            </div>
+            
+            <!-- Suica Form -->
+            <div id="formSuica" class="form-container hidden">
+                <div style="text-align: center; padding: 15px 0;">
+                    <div style="font-size: 48px; margin-bottom: 10px;">🚃</div>
+                    <p style="color: #059669; font-weight: 600; margin-bottom: 5px;">
+                        Suica / Pasmo / ICOCA
+                    </p>
+                    <p style="color: #6b7280; font-size: 14px;">
+                        交通系ICカードのIDと情報を読み取ります<br>
+                        Read transit IC card info
+                    </p>
+                </div>
+                <div style="background: #fef3c7; padding: 12px; border-radius: 8px; margin-bottom: 15px; font-size: 13px; color: #92400e;">
+                    ⚠️ <strong>残高読取について:</strong><br>
+                    残高・履歴の読取には <a href="https://zadig.akeo.ie/" target="_blank" style="color:#1d4ed8">Zadig</a> でWinUSBドライバのインストールが必要です。<br>
+                    <small>IDmの読取は現在の設定で可能です。</small>
+                </div>
+                <button id="scanSuicaBtn" class="btn-primary" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+                    🔍 カードをスキャン
+                </button>
+            </div>
+            
+            <!-- Zairyu Form -->
+            <div id="formZairyu" class="form-container hidden">
+                <div class="form-group">
+                    <label>在留カード番号 (Card Number)</label>
+                    <input type="text" id="zairyuNumber" placeholder="AB12345678CD" maxlength="12">
+                    <div class="input-hint">カード表面の番号</div>
+                </div>
+                <div class="form-group">
+                    <label>生年月日 (Date of Birth)</label>
+                    <input type="text" id="zairyuBirth" placeholder="YYMMDD (例: 900115)">
+                    <div class="input-hint">年月日: 900115 = 1990年1月15日</div>
+                </div>
+                <div class="form-group">
+                    <label>有効期限 (Expiry Date)</label>
+                    <input type="text" id="zairyuExpiry" placeholder="YYMMDD (例: 350115)">
+                    <div class="input-hint">カード表面の有効期限</div>
+                </div>
+                <button id="scanZairyuBtn" class="btn-primary" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);">
+                    🔍 認証してスキャン
+                </button>
+                <button id="scanZairyuBasicBtn" class="btn-secondary">
+                    認証なしで基本情報のみ
+                </button>
+            </div>
+            
+            <!-- Scan Animation -->
+            <div id="scanArea" class="scan-area">
+                <div class="nfc-icon">📡</div>
+                <p style="margin-top: 20px; color: #6b7280;">
+                    Đặt thẻ lên đầu đọc...<br>
+                    Place card on reader...
+                </p>
+                <button id="cancelBtn" class="btn-danger">Cancel</button>
+            </div>
+            
+            <!-- Error -->
+            <div id="errorMsg" class="error-msg"></div>
+            
+            <!-- Results -->
+            <div id="resultArea" class="result-area">
+                <div class="result-header">
+                    <span style="font-size: 24px;">✅</span>
+                    <h3>Card Read Successfully!</h3>
+                </div>
+                <div id="resultContent"></div>
+                <button id="newScanBtn" class="btn-secondary">
+                    Scan Another Card
+                </button>
+            </div>
+        </div>
+        
+        <!-- Log -->
+        <div class="log-card">
+            <pre id="logOutput">[Console Log]</pre>
+        </div>
+    </div>
+
+    <script>
+        const WS_URL = 'ws://localhost:3005';
+        let ws = null;
+        let currentCardType = 'generic';
+
+        const el = {
+            statusBar: document.getElementById('statusBar'),
+            statusText: document.getElementById('statusText'),
+            tabsContainer: document.getElementById('tabsContainer'),
+            formGeneric: document.getElementById('formGeneric'),
+            formCCCD: document.getElementById('formCCCD'),
+            formMyNumber: document.getElementById('formMyNumber'),
+            formSuica: document.getElementById('formSuica'),
+            formZairyu: document.getElementById('formZairyu'),
+            scanGenericBtn: document.getElementById('scanGenericBtn'),
+            scanCCCDBtn: document.getElementById('scanCCCDBtn'),
+            scanMyNumberBtn: document.getElementById('scanMyNumberBtn'),
+            scanMyNumberNoPinBtn: document.getElementById('scanMyNumberNoPinBtn'),
+            scanSuicaBtn: document.getElementById('scanSuicaBtn'),
+            scanZairyuBtn: document.getElementById('scanZairyuBtn'),
+            scanZairyuBasicBtn: document.getElementById('scanZairyuBasicBtn'),
+            cccdNumber: document.getElementById('cccdNumber'),
+            cccdBirth: document.getElementById('cccdBirth'),
+            cccdExpiry: document.getElementById('cccdExpiry'),
+            mynumberPin: document.getElementById('mynumberPin'),
+            zairyuNumber: document.getElementById('zairyuNumber'),
+            zairyuBirth: document.getElementById('zairyuBirth'),
+            zairyuExpiry: document.getElementById('zairyuExpiry'),
+            scanArea: document.getElementById('scanArea'),
+            cancelBtn: document.getElementById('cancelBtn'),
+            errorMsg: document.getElementById('errorMsg'),
+            resultArea: document.getElementById('resultArea'),
+            resultContent: document.getElementById('resultContent'),
+            newScanBtn: document.getElementById('newScanBtn'),
+            logOutput: document.getElementById('logOutput')
+        };
+
+        // Utility functions
+        function log(msg) {
+            const time = new Date().toLocaleTimeString();
+            el.logOutput.textContent += `\n[${time}] ${msg}`;
+            el.logOutput.parentElement.scrollTop = el.logOutput.parentElement.scrollHeight;
+        }
+
+        function setStatus(status, text) {
+            el.statusBar.className = `status-bar ${status}`;
+            el.statusText.textContent = text;
+        }
+
+        function showError(msg) {
+            el.errorMsg.textContent = msg;
+            el.errorMsg.classList.add('show');
+        }
+
+        function hideError() {
+            el.errorMsg.classList.remove('show');
+        }
+
+        function showForm(type) {
+            el.formGeneric.classList.add('hidden');
+            el.formCCCD.classList.add('hidden');
+            el.formMyNumber.classList.add('hidden');
+            el.formSuica.classList.add('hidden');
+            el.formZairyu.classList.add('hidden');
+            el.scanArea.classList.remove('active');
+            el.resultArea.classList.remove('show');
+            hideError();
+
+            if (type === 'generic') el.formGeneric.classList.remove('hidden');
+            if (type === 'cccd') el.formCCCD.classList.remove('hidden');
+            if (type === 'mynumber') el.formMyNumber.classList.remove('hidden');
+            if (type === 'suica') el.formSuica.classList.remove('hidden');
+            if (type === 'zairyu') el.formZairyu.classList.remove('hidden');
+        }
+
+        function showScanAnimation() {
+            el.formGeneric.classList.add('hidden');
+            el.formCCCD.classList.add('hidden');
+            el.formMyNumber.classList.add('hidden');
+            el.formSuica.classList.add('hidden');
+            el.formZairyu.classList.add('hidden');
+            el.scanArea.classList.add('active');
+        }
+
+        function hideScanAnimation() {
+            el.scanArea.classList.remove('active');
+            showForm(currentCardType);
+        }
+
+        function showResults(data) {
+            el.scanArea.classList.remove('active');
+            el.formGeneric.classList.add('hidden');
+            el.formCCCD.classList.add('hidden');
+            el.formMyNumber.classList.add('hidden');
+            el.formSuica.classList.add('hidden');
+            el.formZairyu.classList.add('hidden');
+            
+            // Define display labels for My Number card fields
+            const fieldLabels = {
+                'card_type': 'カード種別',
+                'my_number': '個人番号',
+                'name': '氏名',
+                'address': '住所',
+                'birthdate': '生年月日',
+                'gender': '性別',
+                'balance': '残高',
+                'uid': 'UID',
+                'pin_verified': 'PIN認証',
+                'personal_info_read': '個人情報読取',
+                'timestamp': '読取日時',
+                'reader': 'カードリーダー'
+            };
+            
+            // Priority order for display (important fields first)
+            const priorityFields = ['card_type', 'my_number', 'name', 'address', 'birthdate', 'gender', 'balance'];
+            
+            let html = '';
+            
+            // First, show priority fields
+            for (const key of priorityFields) {
+                if (data[key] !== undefined) {
+                    html += renderResultItem(key, data[key], fieldLabels);
+                }
+            }
+            
+            // Then show remaining fields
+            for (const [key, value] of Object.entries(data)) {
+                if (priorityFields.includes(key)) continue;
+                // Skip some internal/noisy fields
+                if (['atr', 'auth_cert_preview', 'simulated'].includes(key)) continue;
+                
+                html += renderResultItem(key, value, fieldLabels);
+            }
+            
+            el.resultContent.innerHTML = html;
+            el.resultArea.classList.add('show');
+        }
+        
+        function renderResultItem(key, value, labels) {
+            let displayValue;
+            let displayLabel = labels[key] || key;
+            
+            if (Array.isArray(value)) {
+                // Special handling for Suica history
+                displayValue = value.map((item, idx) => {
+                    if (typeof item === 'object') {
+                        return `<div style="background:#f3f4f6;padding:8px;border-radius:6px;margin:4px 0;font-size:12px;">
+                            ${Object.entries(item).map(([k,v]) => `<span style="color:#6b7280">${k}:</span> ${v}`).join(' | ')}
+                        </div>`;
+                    }
+                    return item;
+                }).join('');
+            } else if (typeof value === 'object') {
+                displayValue = JSON.stringify(value, null, 2);
+            } else if (typeof value === 'boolean') {
+                displayValue = value ? '✅' : '❌';
+            } else {
+                displayValue = value;
+            }
+            
+            // Highlight important fields
+            let valueClass = 'result-value';
+            if (['balance', 'card_type', 'my_number', 'name'].includes(key)) {
+                valueClass += ' highlight';
+            }
+            
+            // Special styling for my_number (mask middle digits)
+            if (key === 'my_number' && typeof displayValue === 'string' && displayValue.length === 12) {
+                displayValue = `${displayValue.slice(0,4)} **** ${displayValue.slice(-4)}`;
+            }
+            
+            return `
+                <div class="result-item">
+                    <span class="result-label">${displayLabel}</span>
+                    <span class="${valueClass}">${displayValue}</span>
+                </div>
+            `;
+        }
+
+        // WebSocket connection
+        function connect() {
+            log('Connecting to ' + WS_URL);
+            ws = new WebSocket(WS_URL);
+
+            ws.onopen = () => {
+                log('Connected!');
+                setStatus('connected', 'Connected to NFC Bridge');
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                log('Received: ' + data.type);
+                handleMessage(data);
+            };
+
+            ws.onclose = () => {
+                log('Disconnected');
+                setStatus('disconnected', 'Disconnected - Reconnecting...');
+                setTimeout(connect, 3000);
+            };
+
+            ws.onerror = () => {
+                log('WebSocket error');
+                showError('Cannot connect to NFC Bridge. Is server.py running?');
+            };
+        }
+
+        function handleMessage(data) {
+            switch (data.type) {
+                case 'connected':
+                    const readerInfo = data.reader_available 
+                        ? `Reader: ${data.reader_name || 'Connected'}` 
+                        : 'No reader detected';
+                    setStatus('connected', readerInfo);
+                    log('Reader: ' + (data.reader_name || 'None'));
+                    break;
+
+                case 'status':
+                    if (data.status === 'waiting_for_card') {
+                        setStatus('waiting', data.message || 'Waiting for card...');
+                        showScanAnimation();
+                    } else if (data.status === 'reading') {
+                        setStatus('reading', data.message || 'Reading card...');
+                    } else if (data.status === 'cancelled') {
+                        setStatus('connected', 'Ready');
+                        hideScanAnimation();
+                    }
+                    break;
+
+                case 'scan_result':
+                    if (data.success) {
+                        log('Card data: ' + JSON.stringify(data.data));
+                        showResults(data.data);
+                        setStatus('connected', 'Scan complete!');
+                    } else {
+                        hideScanAnimation();
+                        showError(data.error || 'Scan failed');
+                        setStatus('connected', 'Ready');
+                    }
+                    break;
+                
+                case 'mynumber_result':
+                    // Handle dedicated My Number API response
+                    if (data.success) {
+                        log('My Number data received');
+                        // Build display data
+                        const displayData = {
+                            card_type: 'マイナンバーカード',
+                            my_number: data.my_number,
+                            name: data.name,
+                            address: data.address,
+                            birthdate: data.birthdate,
+                            gender: data.gender
+                        };
+                        showResults(displayData);
+                        setStatus('connected', '読み取り完了！');
+                    } else {
+                        // Show error with instruction
+                        const errorMsg = data.error_ja || data.error_en || data.error;
+                        const instruction = data.instruction_ja || data.instruction_en || '';
+                        
+                        let fullError = errorMsg;
+                        if (instruction) {
+                            fullError += '\n\n💡 ' + instruction;
+                        }
+                        if (data.remaining_tries !== undefined && data.remaining_tries >= 0) {
+                            fullError += `\n\n⚠️ 残り試行回数: ${data.remaining_tries}回`;
+                        }
+                        
+                        showError(fullError);
+                        setStatus('connected', 'エラー');
+                        log('My Number error: ' + data.error);
+                    }
+                    break;
+
+                case 'error':
+                    showError(data.error);
+                    hideScanAnimation();
+                    setStatus('connected', 'Ready');
+                    break;
+            }
+        }
+
+        function startScan(cardType, params = {}) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                showError('Not connected to bridge');
+                return;
+            }
+            
+            hideError();
+            log(`Starting ${cardType} scan...`);
+            
+            ws.send(JSON.stringify({
+                type: 'start_scan',
+                card_type: cardType,
+                timeout: 30,
+                ...params
+            }));
+        }
+
+        // Event Listeners
+        
+        // Tab switching
+        el.tabsContainer.addEventListener('click', (e) => {
+            const tab = e.target.closest('.tab');
+            if (!tab) return;
+            
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            
+            currentCardType = tab.dataset.type;
+            showForm(currentCardType);
+        });
+
+        // Generic scan
+        el.scanGenericBtn.addEventListener('click', () => {
+            startScan('generic');
+        });
+
+        // CCCD scan
+        el.scanCCCDBtn.addEventListener('click', () => {
+            const cardNumber = el.cccdNumber.value.trim();
+            const birthDate = el.cccdBirth.value.trim();
+            const expiryDate = el.cccdExpiry.value.trim();
+
+            if (cardNumber.length !== 12) {
+                showError('Số CCCD phải có 12 số');
+                return;
+            }
+            if (birthDate.length !== 6) {
+                showError('Ngày sinh phải có dạng YYMMDD (6 số)');
+                return;
+            }
+            if (expiryDate.length !== 6) {
+                showError('Ngày hết hạn phải có dạng YYMMDD (6 số)');
+                return;
+            }
+
+            startScan('cccd', {
+                card_number: cardNumber,
+                birth_date: birthDate,
+                expiry_date: expiryDate
+            });
+        });
+
+        // My Number scan with PIN - use dedicated API
+        el.scanMyNumberBtn.addEventListener('click', () => {
+            const pin = el.mynumberPin.value.trim();
+
+            if (!pin) {
+                showError('PINを入力してください');
+                return;
+            }
+            
+            if (pin.length !== 4 || !/^\d{4}$/.test(pin)) {
+                showError('PINは4桁の数字で入力してください');
+                return;
+            }
+
+            readMyNumberCard(pin);
+        });
+
+        // My Number scan without PIN
+        el.scanMyNumberNoPinBtn.addEventListener('click', () => {
+            startScan('mynumber', { pin: '' });
+        });
+        
+        // Dedicated My Number API call
+        function readMyNumberCard(pin) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                showError('サーバーに接続されていません');
+                return;
+            }
+            
+            hideError();
+            setStatus('reading', 'カードを読み取り中...');
+            log('Reading My Number card with PIN...');
+            
+            ws.send(JSON.stringify({
+                type: 'read_mynumber',
+                pin: pin
+            }));
+        }
+
+        // Suica scan
+        el.scanSuicaBtn.addEventListener('click', () => {
+            startScan('suica');
+        });
+
+        // Zairyu scan with auth
+        el.scanZairyuBtn.addEventListener('click', () => {
+            const cardNumber = el.zairyuNumber.value.trim();
+            const birthDate = el.zairyuBirth.value.trim();
+            const expiryDate = el.zairyuExpiry.value.trim();
+
+            if (!cardNumber) {
+                showError('在留カード番号を入力してください');
+                return;
+            }
+            if (birthDate.length !== 6) {
+                showError('生年月日はYYMMDD形式（6桁）で入力してください');
+                return;
+            }
+            if (expiryDate.length !== 6) {
+                showError('有効期限はYYMMDD形式（6桁）で入力してください');
+                return;
+            }
+
+            startScan('zairyu', {
+                card_number: cardNumber,
+                birth_date: birthDate,
+                expiry_date: expiryDate
+            });
+        });
+
+        // Zairyu scan without auth
+        el.scanZairyuBasicBtn.addEventListener('click', () => {
+            startScan('zairyu', {});
+        });
+
+        // Cancel
+        el.cancelBtn.addEventListener('click', () => {
+            log('Cancelling scan');
+            ws.send(JSON.stringify({ type: 'cancel_scan' }));
+        });
+
+        // New scan
+        el.newScanBtn.addEventListener('click', () => {
+            el.resultArea.classList.remove('show');
+            showForm(currentCardType);
+            hideError();
+        });
+
+        // Auto-format inputs
+        el.cccdNumber.addEventListener('input', (e) => {
+            e.target.value = e.target.value.replace(/\D/g, '').slice(0, 12);
+        });
+        el.cccdBirth.addEventListener('input', (e) => {
+            e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
+        });
+        el.cccdExpiry.addEventListener('input', (e) => {
+            e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
+        });
+        el.mynumberPin.addEventListener('input', (e) => {
+            e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4);
+        });
+        el.zairyuNumber.addEventListener('input', (e) => {
+            e.target.value = e.target.value.toUpperCase().slice(0, 12);
+        });
+        el.zairyuBirth.addEventListener('input', (e) => {
+            e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
+        });
+        el.zairyuExpiry.addEventListener('input', (e) => {
+            e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
+        });
+
+        // Start connection
+        connect();
+    </script>
+</body>
+</html>

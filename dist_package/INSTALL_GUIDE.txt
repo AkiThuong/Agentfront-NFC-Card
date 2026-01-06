@@ -1,0 +1,127 @@
+╔══════════════════════════════════════════════════════════════════╗
+║           NFC Bridge Server - Installation Guide                  ║
+╚══════════════════════════════════════════════════════════════════╝
+
+This package runs on any Windows 10/11 PC without Python.
+
+═══════════════════════════════════════════════════════════════════
+ STEP 1: Install NFC Reader Driver (REQUIRED)
+═══════════════════════════════════════════════════════════════════
+
+Before running the NFC Bridge, you must install your card reader driver.
+
+◆ Sony PaSoRi (RC-S380, RC-S300 series):
+  Download: https://www.sony.co.jp/Products/felica/consumer/download/
+  Or use the included driver if provided.
+
+◆ ACR122U / ACR1252:
+  Download: https://www.acs.com.hk/en/driver/
+  Search for your model and download Windows driver.
+
+◆ Other PC/SC Readers:
+  Check your manufacturer's website for Windows drivers.
+
+After installing the driver:
+  1. Plug in your NFC reader via USB
+  2. Windows should recognize it
+  3. Check Device Manager → Smart card readers
+
+═══════════════════════════════════════════════════════════════════
+ STEP 2: Enable Windows Smart Card Service
+═══════════════════════════════════════════════════════════════════
+
+The Smart Card service should be running by default on Windows.
+To verify:
+
+  1. Press Win+R, type: services.msc
+  2. Find "Smart Card" service
+  3. Make sure Status is "Running"
+  4. If not, right-click → Start
+
+═══════════════════════════════════════════════════════════════════
+ STEP 3: Run NFC Bridge Server
+═══════════════════════════════════════════════════════════════════
+
+Option A - Quick Start (Manual):
+  → Double-click: start.bat
+  → Or run: nfc_launcher.exe
+
+Option B - Install as Windows Service (Auto-start on boot):
+  → Right-click install.bat → "Run as administrator"
+  → The server will now start automatically when Windows boots
+
+═══════════════════════════════════════════════════════════════════
+ STEP 4: Verify Installation
+═══════════════════════════════════════════════════════════════════
+
+  1. Run nfc_launcher.exe (or the status page opens automatically)
+  2. Check the status page in your browser:
+     ✓ Server Status: Online
+     ✓ Card Reader: Connected
+  3. Place a card on the reader
+     ✓ Card Present: Detected
+
+═══════════════════════════════════════════════════════════════════
+ TROUBLESHOOTING
+═══════════════════════════════════════════════════════════════════
+
+Problem: "Server Status: Offline"
+  → The server isn't running
+  → Run start.bat or nfc_server.exe
+
+Problem: "Card Reader: Not Found"
+  → Check USB connection
+  → Install/reinstall reader driver
+  → Check Device Manager for errors
+
+Problem: "Card Present: No Card" but card is on reader
+  → Try repositioning the card
+  → Check if the card type is supported
+  → Some cards need to be held steady
+
+Problem: Port 3005 already in use
+  → Another application is using the port
+  → Close other instances of NFC Bridge
+  → Or change PORT in server configuration
+
+═══════════════════════════════════════════════════════════════════
+ FILES INCLUDED
+═══════════════════════════════════════════════════════════════════
+
+  nfc_server.exe    - Main WebSocket server (runs in background)
+  nfc_launcher.exe  - Opens status page, starts server if needed
+  nfc_service.exe   - Windows service wrapper
+  status.html       - Browser-based status page
+  install.bat       - Install as Windows service (run as admin)
+  uninstall.bat     - Remove Windows service (run as admin)
+  start.bat         - Quick start without service
+
+═══════════════════════════════════════════════════════════════════
+ SUPPORTED CARDS
+═══════════════════════════════════════════════════════════════════
+
+  🇻🇳 Vietnamese CCCD (Căn cước công dân)
+  🇯🇵 Japanese My Number Card (マイナンバーカード)
+  🇯🇵 Japanese Zairyu Card (在留カード)
+  🚃 Suica/Pasmo/ICOCA (ID only, balance requires special setup)
+  🔖 Generic NFC cards (UID reading)
+
+═══════════════════════════════════════════════════════════════════
+ TECHNICAL INFO
+═══════════════════════════════════════════════════════════════════
+
+  WebSocket URL: ws://localhost:3005
+  Protocol: WebSocket (JSON messages)
+  Service Name: NFCBridgeService
+  Log File: nfc_bridge.log (in same folder)
+
+═══════════════════════════════════════════════════════════════════
+ SUPPORT
+═══════════════════════════════════════════════════════════════════
+
+For issues or questions, check the log files:
+  - nfc_bridge.log (server log)
+  - nfc_service.log (service log)
+
+Version: 2.1
+

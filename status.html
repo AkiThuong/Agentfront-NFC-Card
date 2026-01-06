@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NFC Bridge Server Status</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-card: #1a1a24;
+            --text-primary: #e8e8ed;
+            --text-secondary: #8b8b9e;
+            --accent-green: #00d97e;
+            --accent-green-glow: rgba(0, 217, 126, 0.3);
+            --accent-red: #ff4757;
+            --accent-red-glow: rgba(255, 71, 87, 0.3);
+            --accent-blue: #3b82f6;
+            --accent-orange: #f59e0b;
+            --border-color: #2a2a3a;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+            background-image: 
+                radial-gradient(ellipse at 50% 0%, rgba(59, 130, 246, 0.08) 0%, transparent 50%),
+                radial-gradient(ellipse at 100% 100%, rgba(0, 217, 126, 0.05) 0%, transparent 40%);
+        }
+
+        .container {
+            max-width: 600px;
+            width: 100%;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 2.5rem;
+        }
+
+        .logo {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 1.5rem;
+            background: linear-gradient(135deg, var(--accent-blue) 0%, #8b5cf6 100%);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+            box-shadow: 0 8px 32px rgba(59, 130, 246, 0.25);
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        .status-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 2rem;
+            margin-bottom: 1.5rem;
+            transition: all 0.3s ease;
+        }
+
+        .status-card:hover {
+            border-color: var(--accent-blue);
+            box-shadow: 0 4px 24px rgba(59, 130, 246, 0.1);
+        }
+
+        .status-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1rem 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .status-row:last-child {
+            border-bottom: none;
+            padding-bottom: 0;
+        }
+
+        .status-row:first-child {
+            padding-top: 0;
+        }
+
+        .status-label {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .status-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+            background: var(--bg-secondary);
+        }
+
+        .status-text h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 0.2rem;
+        }
+
+        .status-text p {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .status-indicator.online {
+            background: rgba(0, 217, 126, 0.15);
+            color: var(--accent-green);
+            box-shadow: 0 0 20px var(--accent-green-glow);
+        }
+
+        .status-indicator.offline {
+            background: rgba(255, 71, 87, 0.15);
+            color: var(--accent-red);
+            box-shadow: 0 0 20px var(--accent-red-glow);
+        }
+
+        .status-indicator.checking {
+            background: rgba(245, 158, 11, 0.15);
+            color: var(--accent-orange);
+        }
+
+        .pulse {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        .pulse.online {
+            background: var(--accent-green);
+        }
+
+        .pulse.offline {
+            background: var(--accent-red);
+            animation: none;
+        }
+
+        .pulse.checking {
+            background: var(--accent-orange);
+            animation: blink 0.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(1.2); }
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .info-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.25rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .info-card h4 {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-secondary);
+            margin-bottom: 0.75rem;
+        }
+
+        .info-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            color: var(--accent-blue);
+            word-break: break-all;
+        }
+
+        .supported-cards {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .card-badge {
+            padding: 0.35rem 0.75rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .actions {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1.5rem;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 1rem 1.5rem;
+            border: none;
+            border-radius: 12px;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-blue) 0%, #2563eb 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(59, 130, 246, 0.3);
+        }
+
+        .btn-secondary {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--accent-blue);
+            background: var(--bg-secondary);
+        }
+
+        .log-section {
+            margin-top: 2rem;
+        }
+
+        .log-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+        }
+
+        .log-header h3 {
+            font-size: 1rem;
+            color: var(--text-secondary);
+        }
+
+        .log-container {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1rem;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+        }
+
+        .log-entry {
+            padding: 0.3rem 0;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-entry.success {
+            color: var(--accent-green);
+        }
+
+        .log-entry.error {
+            color: var(--accent-red);
+        }
+
+        .log-entry .timestamp {
+            color: var(--text-secondary);
+            margin-right: 0.5rem;
+        }
+
+        footer {
+            margin-top: 2rem;
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        footer a {
+            color: var(--accent-blue);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="logo">📡</div>
+            <h1>NFC Bridge Server</h1>
+            <p class="subtitle">WebSocket server for NFC card reading</p>
+        </header>
+
+        <div class="status-card">
+            <div class="status-row">
+                <div class="status-label">
+                    <div class="status-icon">🖥️</div>
+                    <div class="status-text">
+                        <h3>Server Status</h3>
+                        <p id="server-endpoint">ws://localhost:3005</p>
+                    </div>
+                </div>
+                <div class="status-indicator checking" id="server-status">
+                    <span class="pulse checking"></span>
+                    <span>Checking...</span>
+                </div>
+            </div>
+
+            <div class="status-row">
+                <div class="status-label">
+                    <div class="status-icon">💳</div>
+                    <div class="status-text">
+                        <h3>Card Reader</h3>
+                        <p id="reader-name">Detecting...</p>
+                    </div>
+                </div>
+                <div class="status-indicator checking" id="reader-status">
+                    <span class="pulse checking"></span>
+                    <span>Checking...</span>
+                </div>
+            </div>
+
+            <div class="status-row">
+                <div class="status-label">
+                    <div class="status-icon">🃏</div>
+                    <div class="status-text">
+                        <h3>Card Present</h3>
+                        <p>Card on reader detection</p>
+                    </div>
+                </div>
+                <div class="status-indicator checking" id="card-status">
+                    <span class="pulse checking"></span>
+                    <span>—</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="info-card">
+            <h4>Server Version</h4>
+            <div class="info-value" id="server-version">—</div>
+        </div>
+
+        <div class="info-card">
+            <h4>Supported Card Types</h4>
+            <div class="supported-cards" id="supported-cards">
+                <span class="card-badge">Loading...</span>
+            </div>
+        </div>
+
+        <div class="actions">
+            <button class="btn btn-primary" onclick="checkStatus()">
+                🔄 Refresh Status
+            </button>
+            <button class="btn btn-secondary" onclick="testRead()">
+                📖 Test Read
+            </button>
+        </div>
+
+        <div class="log-section">
+            <div class="log-header">
+                <h3>📋 Activity Log</h3>
+                <button class="btn btn-secondary" style="flex: 0; padding: 0.5rem 1rem; font-size: 0.8rem;" onclick="clearLog()">Clear</button>
+            </div>
+            <div class="log-container" id="log-container">
+                <div class="log-entry">
+                    <span class="timestamp">[--:--:--]</span>
+                    Waiting for connection...
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <p>NFC Bridge Server v2.1 | Port 3005</p>
+            <p>Supports: Vietnamese CCCD, Japanese My Number, Zairyu Card, Suica</p>
+        </footer>
+    </div>
+
+    <script>
+        const WS_URL = 'ws://localhost:3005';
+        let ws = null;
+        let reconnectInterval = null;
+        let pingInterval = null;
+
+        function log(message, type = 'info') {
+            const container = document.getElementById('log-container');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+            entry.innerHTML = `<span class="timestamp">[${time}]</span> ${message}`;
+            container.insertBefore(entry, container.firstChild);
+            
+            // Keep only last 50 entries
+            while (container.children.length > 50) {
+                container.removeChild(container.lastChild);
+            }
+        }
+
+        function clearLog() {
+            const container = document.getElementById('log-container');
+            container.innerHTML = '';
+            log('Log cleared');
+        }
+
+        function updateServerStatus(online, message = '') {
+            const status = document.getElementById('server-status');
+            const pulse = status.querySelector('.pulse');
+            const text = status.querySelector('span:last-child');
+            
+            status.className = `status-indicator ${online ? 'online' : 'offline'}`;
+            pulse.className = `pulse ${online ? 'online' : 'offline'}`;
+            text.textContent = online ? 'Online' : 'Offline';
+        }
+
+        function updateReaderStatus(available, name = null) {
+            const status = document.getElementById('reader-status');
+            const pulse = status.querySelector('.pulse');
+            const text = status.querySelector('span:last-child');
+            const nameEl = document.getElementById('reader-name');
+            
+            if (available) {
+                status.className = 'status-indicator online';
+                pulse.className = 'pulse online';
+                text.textContent = 'Connected';
+                nameEl.textContent = name || 'NFC Reader';
+            } else {
+                status.className = 'status-indicator offline';
+                pulse.className = 'pulse offline';
+                text.textContent = 'Not Found';
+                nameEl.textContent = 'No reader detected';
+            }
+        }
+
+        function updateCardStatus(present) {
+            const status = document.getElementById('card-status');
+            const pulse = status.querySelector('.pulse');
+            const text = status.querySelector('span:last-child');
+            
+            if (present === null) {
+                status.className = 'status-indicator checking';
+                pulse.className = 'pulse checking';
+                text.textContent = '—';
+            } else if (present) {
+                status.className = 'status-indicator online';
+                pulse.className = 'pulse online';
+                text.textContent = 'Detected';
+            } else {
+                status.className = 'status-indicator offline';
+                pulse.className = 'pulse offline';
+                text.textContent = 'No Card';
+            }
+        }
+
+        function updateSupportedCards(cards) {
+            const container = document.getElementById('supported-cards');
+            if (cards && cards.length > 0) {
+                const cardNames = {
+                    'generic': '🔖 Generic NFC',
+                    'cccd': '🇻🇳 Vietnam CCCD',
+                    'mynumber': '🇯🇵 My Number',
+                    'zairyu': '🇯🇵 Zairyu Card',
+                    'suica': '🚃 Suica/Pasmo'
+                };
+                container.innerHTML = cards.map(c => 
+                    `<span class="card-badge">${cardNames[c] || c}</span>`
+                ).join('');
+            }
+        }
+
+        function connect() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                return;
+            }
+
+            log('Connecting to server...');
+            
+            try {
+                ws = new WebSocket(WS_URL);
+                
+                ws.onopen = () => {
+                    log('Connected to NFC Bridge Server', 'success');
+                    updateServerStatus(true);
+                    
+                    // Clear reconnect interval
+                    if (reconnectInterval) {
+                        clearInterval(reconnectInterval);
+                        reconnectInterval = null;
+                    }
+                    
+                    // Start ping interval
+                    pingInterval = setInterval(() => {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({ type: 'get_status' }));
+                        }
+                    }, 5000);
+                };
+                
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleMessage(data);
+                    } catch (e) {
+                        log(`Invalid message: ${event.data}`, 'error');
+                    }
+                };
+                
+                ws.onclose = () => {
+                    log('Disconnected from server', 'error');
+                    updateServerStatus(false);
+                    updateReaderStatus(false);
+                    updateCardStatus(null);
+                    
+                    // Clear ping interval
+                    if (pingInterval) {
+                        clearInterval(pingInterval);
+                        pingInterval = null;
+                    }
+                    
+                    // Start reconnect interval
+                    if (!reconnectInterval) {
+                        reconnectInterval = setInterval(connect, 3000);
+                    }
+                };
+                
+                ws.onerror = (error) => {
+                    log('Connection error', 'error');
+                };
+                
+            } catch (e) {
+                log(`Failed to connect: ${e.message}`, 'error');
+                updateServerStatus(false);
+            }
+        }
+
+        function handleMessage(data) {
+            switch (data.type) {
+                case 'connected':
+                    log(`Server ready (v${data.version || '?'})`, 'success');
+                    document.getElementById('server-version').textContent = data.version || 'Unknown';
+                    updateReaderStatus(data.reader_available, data.reader_name);
+                    updateSupportedCards(data.supported_cards);
+                    
+                    // Request current status
+                    ws.send(JSON.stringify({ type: 'get_status' }));
+                    break;
+                    
+                case 'status_response':
+                    updateReaderStatus(data.reader_available, data.reader_name);
+                    updateCardStatus(data.card_present);
+                    break;
+                    
+                case 'scan_result':
+                    if (data.success) {
+                        log(`Card read successful: ${JSON.stringify(data.data).substring(0, 100)}...`, 'success');
+                    } else {
+                        log(`Card read failed: ${data.error}`, 'error');
+                    }
+                    break;
+                    
+                case 'status':
+                    log(`Status: ${data.message || data.status}`);
+                    break;
+                    
+                case 'pong':
+                    // Heartbeat received
+                    break;
+                    
+                default:
+                    log(`Message: ${data.type}`);
+            }
+        }
+
+        function checkStatus() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'get_status' }));
+                log('Checking status...');
+            } else {
+                connect();
+            }
+        }
+
+        function testRead() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                log('Starting card read test...');
+                ws.send(JSON.stringify({ 
+                    type: 'read_now',
+                    card_type: 'generic'
+                }));
+            } else {
+                log('Server not connected', 'error');
+            }
+        }
+
+        // Initial connection
+        connect();
+    </script>
+</body>
+</html>
+

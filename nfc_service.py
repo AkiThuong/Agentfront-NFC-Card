@@ -1,0 +1,221 @@
+"""
+NFC Bridge Windows Service
+==========================
+Runs the NFC Bridge Server as a Windows Service.
+
+Installation:
+    python nfc_service.py install
+    
+Start:
+    python nfc_service.py start
+    OR
+    net start NFCBridgeService
+
+Stop:
+    python nfc_service.py stop
+    OR
+    net stop NFCBridgeService
+
+Remove:
+    python nfc_service.py remove
+
+Debug (run in console):
+    python nfc_service.py debug
+"""
+
+import sys
+import os
+import time
+import asyncio
+import logging
+import threading
+from pathlib import Path
+
+# Add current directory to path for imports
+script_dir = Path(__file__).parent.resolve()
+sys.path.insert(0, str(script_dir))
+
+# Try to import win32 service components
+try:
+    import win32serviceutil
+    import win32service
+    import win32event
+    import servicemanager
+    WIN32_AVAILABLE = True
+except ImportError:
+    WIN32_AVAILABLE = False
+    print("WARNING: pywin32 not installed - service mode unavailable")
+    print("Install: pip install pywin32")
+
+# Import the server module
+try:
+    from server import NFCBridge, HOST, PORT
+    import websockets
+    SERVER_AVAILABLE = True
+except ImportError as e:
+    SERVER_AVAILABLE = False
+    print(f"WARNING: Cannot import server module: {e}")
+
+
+class NFCBridgeService:
+    """Service wrapper for NFC Bridge Server"""
+    
+    _svc_name_ = "NFCBridgeService"
+    _svc_display_name_ = "NFC Bridge Server"
+    _svc_description_ = "WebSocket server for NFC card reading (CCCD, My Number, Suica)"
+    
+    def __init__(self):
+        self.running = False
+        self.bridge = None
+        self.server = None
+        self.loop = None
+        self.server_thread = None
+        
+        # Setup logging
+        log_path = script_dir / 'nfc_service.log'
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(str(log_path), encoding='utf-8'),
+                logging.StreamHandler()
+            ]
+        )
+        self.logger = logging.getLogger(__name__)
+    
+    def start(self):
+        """Start the service"""
+        self.logger.info("NFC Bridge Service starting...")
+        self.running = True
+        self.server_thread = threading.Thread(target=self._run_server, daemon=True)
+        self.server_thread.start()
+        self.logger.info("NFC Bridge Service started")
+    
+    def stop(self):
+        """Stop the service"""
+        self.logger.info("NFC Bridge Service stopping...")
+        self.running = False
+        
+        if self.loop and self.server:
+            # Schedule server close
+            asyncio.run_coroutine_threadsafe(self._stop_server(), self.loop)
+        
+        if self.server_thread and self.server_thread.is_alive():
+            self.server_thread.join(timeout=5)
+        
+        self.logger.info("NFC Bridge Service stopped")
+    
+    async def _stop_server(self):
+        """Stop the WebSocket server"""
+        if self.server:
+            self.server.close()
+            await self.server.wait_closed()
+    
+    def _run_server(self):
+        """Run the server in a separate thread"""
+        try:
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
+            
+            self.bridge = NFCBridge()
+            
+            async def serve():
+                self.server = await websockets.serve(
+                    self.bridge.handler, 
+                    HOST, 
+                    PORT
+                )
+                self.logger.info(f"Server listening on ws://{HOST}:{PORT}")
+                
+                # Keep running until stopped
+                while self.running:
+                    await asyncio.sleep(1)
+            
+            self.loop.run_until_complete(serve())
+            
+        except Exception as e:
+            self.logger.error(f"Server error: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            if self.loop:
+                self.loop.close()
+
+
+if WIN32_AVAILABLE:
+    class NFCBridgeWindowsService(win32serviceutil.ServiceFramework):
+        """Windows Service Framework wrapper"""
+        
+        _svc_name_ = "NFCBridgeService"
+        _svc_display_name_ = "NFC Bridge Server"
+        _svc_description_ = "WebSocket server for NFC card reading (CCCD, My Number, Suica)"
+        
+        def __init__(self, args):
+            win32serviceutil.ServiceFramework.__init__(self, args)
+            self.stop_event = win32event.CreateEvent(None, 0, 0, None)
+            self.service = NFCBridgeService()
+        
+        def SvcStop(self):
+            """Called when the service is asked to stop"""
+            self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
+            self.service.stop()
+            win32event.SetEvent(self.stop_event)
+        
+        def SvcDoRun(self):
+            """Called when the service is asked to start"""
+            servicemanager.LogMsg(
+                servicemanager.EVENTLOG_INFORMATION_TYPE,
+                servicemanager.PYS_SERVICE_STARTED,
+                (self._svc_name_, '')
+            )
+            
+            self.service.start()
+            
+            # Wait for stop event
+            win32event.WaitForSingleObject(self.stop_event, win32event.INFINITE)
+
+
+def run_standalone():
+    """Run the server standalone (not as a service)"""
+    print("=" * 60)
+    print("  NFC Bridge Server - Standalone Mode")
+    print("=" * 60)
+    print(f"  URL: ws://{HOST}:{PORT}")
+    print("  Press Ctrl+C to stop")
+    print("=" * 60)
+    
+    service = NFCBridgeService()
+    
+    try:
+        service.start()
+        # Keep main thread alive
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+        service.stop()
+
+
+def main():
+    if len(sys.argv) == 1:
+        # No arguments - run standalone
+        run_standalone()
+    elif sys.argv[1] == 'standalone':
+        run_standalone()
+    elif WIN32_AVAILABLE:
+        # Handle Windows service commands
+        if len(sys.argv) > 1 and sys.argv[1] == 'debug':
+            # Debug mode - run standalone
+            run_standalone()
+        else:
+            win32serviceutil.HandleCommandLine(NFCBridgeWindowsService)
+    else:
+        print("Windows service mode requires pywin32")
+        print("Run 'pip install pywin32' to enable service mode")
+        print("\nRunning in standalone mode...")
+        run_standalone()
+
+
+if __name__ == "__main__":
+    main()
+
