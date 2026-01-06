@@ -212,6 +212,39 @@ def build_service():
         return False
 
 
+def build_checker():
+    """Build the system checker executable"""
+    print("\n" + "=" * 60)
+    print("Building System Checker...")
+    print("=" * 60)
+    
+    hidden_imports = get_hidden_imports()
+    hidden_import_args = []
+    for imp in hidden_imports:
+        hidden_import_args.extend(['--hidden-import', imp])
+    
+    cmd = [
+        sys.executable, '-m', 'PyInstaller',
+        '--onefile',
+        '--name', 'check_system',
+        '--icon', 'NONE',
+        '--console',
+        '--noupx',
+        *hidden_import_args,
+        str(SCRIPT_DIR / 'check_system.py')
+    ]
+    
+    print(f"Running: {' '.join(cmd[:10])}...")
+    result = subprocess.run(cmd, cwd=str(SCRIPT_DIR))
+    
+    if result.returncode == 0:
+        print("✓ System checker build complete: dist/check_system.exe")
+        return True
+    else:
+        print("✗ System checker build failed")
+        return False
+
+
 def copy_additional_files():
     """Copy additional files to dist folder"""
     print("\nCopying additional files...")
@@ -227,6 +260,12 @@ def copy_additional_files():
     if suica_src.exists():
         shutil.copy(suica_src, DIST_DIR / "suica_subprocess.py")
         print("  ✓ suica_subprocess.py")
+    
+    # Copy install guide
+    guide_src = SCRIPT_DIR / "dist_package" / "INSTALL_GUIDE.txt"
+    if guide_src.exists():
+        shutil.copy(guide_src, DIST_DIR / "INSTALL_GUIDE.txt")
+        print("  ✓ INSTALL_GUIDE.txt")
 
 
 def create_install_script():
@@ -390,6 +429,9 @@ def main():
     
     if build_all or 'all' in build_items or 'service' in build_items:
         success = build_service() and success
+    
+    if build_all or 'all' in build_items or 'checker' in build_items:
+        success = build_checker() and success
     
     # Copy additional files
     if DIST_DIR.exists():
