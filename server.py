@@ -1380,27 +1380,65 @@ class NfcpySuicaReader:
 
 
 # =============================================================================
-# Zairyu Card Reader (在留カード)
+# Zairyu Card Reader (在留カード) - Based on Official Spec Ver 1.5
 # =============================================================================
 
 class ZairyuCardReader:
     """
     Japanese Residence Card (在留カード) reader.
-    Uses ICAO 9303 standard similar to e-Passport.
-    MRZ-based BAC authentication.
+    Based on 在留カード等仕様書 Ver 1.5 (令和6年3月) - Immigration Services Agency
+    
+    Authentication: Card number only (12 characters)
+    Protocol: SELECT MF → GET CHALLENGE → MUTUAL AUTH → VERIFY(card#) → READ
+    
+    No PIN retry limit - uses card number printed on card.
     """
+    
+    # AIDs from official specification (Section 3.3.2)
+    AID_MF = []  # Master File - no AID needed, select with P1=00
+    AID_DF1 = [0xD3, 0x92, 0xF0, 0x00, 0x4F, 0x02, 0x00, 0x00, 
+               0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]  # 券面イメージ, 顔写真
+    AID_DF2 = [0xD3, 0x92, 0xF0, 0x00, 0x4F, 0x03, 0x00, 0x00,
+               0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]  # 券面(様式)テキスト
+    AID_DF3 = [0xD3, 0x92, 0xF0, 0x00, 0x4F, 0x04, 0x00, 0x00,
+               0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]  # 電子署名
+    
+    # EF Short IDs (from Section 3.3.4)
+    # MF files
+    EF_MF_COMMON = 0x01      # 共通データ要素 (free access)
+    EF_MF_CARD_TYPE = 0x02   # カード種別 (free access)
+    
+    # DF1 files (needs auth)
+    EF_DF1_FRONT_IMAGE = 0x05   # 券面(表)イメージ - ~7000 bytes JPEG
+    EF_DF1_PHOTO = 0x06         # 顔写真 - ~3000 bytes JPEG
+    
+    # DF2 files (needs auth)
+    EF_DF2_FRONT_TEXT = 0x01    # 券面(様式)テキスト
+    EF_DF2_BACK_TEXT = 0x02     # 裏面追記欄テキスト
+    EF_DF2_PHOTO_HASH = 0x06    # 顔写真(ハッシュ)
+    EF_DF2_ADDRESS = 0x07       # 住居地
+    
+    # DF3 files (free access after auth)
+    EF_DF3_SIGNATURE = 0x02     # 電子署名 (checkcode + certificate)
+    
+    # Mutual Authentication keys (from spec - fixed initial keys)
+    # These are the default keys for session establishment
+    K_ENC_INIT = bytes([0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41,
+                        0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41])
+    K_MAC_INIT = bytes([0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
+                        0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42])
     
     def __init__(self, connection):
         self.connection = connection
+        self.ks_enc = None  # Session encryption key
+        self.ks_mac = None  # Session MAC key (not used in this spec)
+        self.authenticated = False
     
     def send_apdu(self, apdu: List[int]) -> tuple:
+        """Send APDU and return response"""
         data, sw1, sw2 = self.connection.transmit(apdu)
+        logger.debug(f"APDU: {toHexString(apdu)} -> SW={sw1:02X}{sw2:02X}")
         return data, sw1, sw2
-    
-    def select_mrtd_application(self) -> bool:
-        """Select the MRTD application (same as e-Passport/CCCD)"""
-        data, sw1, sw2 = self.send_apdu(APDU.SELECT_MRTD_APP)
-        return sw1 == 0x90 and sw2 == 0x00
     
     def get_uid(self) -> Optional[str]:
         """Get card UID"""
@@ -1408,6 +1446,541 @@ class ZairyuCardReader:
         if sw1 == 0x90:
             return toHexString(data).replace(" ", "")
         return None
+    
+    def select_mf(self) -> bool:
+        """Select Master File"""
+        # SELECT MF: 00 A4 04 0C 00
+        cmd = [0x00, 0xA4, 0x04, 0x0C, 0x00]
+        data, sw1, sw2 = self.send_apdu(cmd)
+        return sw1 == 0x90
+    
+    def select_df(self, aid: List[int]) -> bool:
+        """Select Dedicated File by AID"""
+        # SELECT DF: 00 A4 04 0C Lc [AID]
+        cmd = [0x00, 0xA4, 0x04, 0x0C, len(aid)] + aid
+        data, sw1, sw2 = self.send_apdu(cmd)
+        return sw1 == 0x90
+    
+    def get_challenge(self) -> Optional[bytes]:
+        """Get 8-byte challenge from card"""
+        # GET CHALLENGE: 00 84 00 00 08
+        cmd = [0x00, 0x84, 0x00, 0x00, 0x08]
+        data, sw1, sw2 = self.send_apdu(cmd)
+        if sw1 == 0x90 and len(data) == 8:
+            return bytes(data)
+        return None
+    
+    def _pad_data(self, data: bytes) -> bytes:
+        """Apply ISO 9797-1 padding (method 2)"""
+        padded = data + bytes([0x80])
+        while len(padded) % 8 != 0:
+            padded += bytes([0x00])
+        return padded
+    
+    def _unpad_data(self, data: bytes) -> bytes:
+        """Remove ISO 9797-1 padding"""
+        i = len(data) - 1
+        while i >= 0 and data[i] == 0x00:
+            i -= 1
+        if i >= 0 and data[i] == 0x80:
+            return data[:i]
+        return data
+    
+    def _compute_retail_mac(self, key: bytes, data: bytes) -> bytes:
+        """Compute Retail MAC (ISO 9797-1 Algorithm 3)"""
+        if not CRYPTO_AVAILABLE:
+            raise RuntimeError("pycryptodome required")
+        
+        padded = self._pad_data(data)
+        ka = key[:8]
+        kb = key[8:16]
+        
+        h = bytes(8)
+        cipher_a = DES.new(ka, DES.MODE_ECB)
+        for i in range(0, len(padded), 8):
+            block = padded[i:i+8]
+            xored = bytes(a ^ b for a, b in zip(h, block))
+            h = cipher_a.encrypt(xored)
+        
+        cipher_b = DES.new(kb, DES.MODE_ECB)
+        h = cipher_b.decrypt(h)
+        h = cipher_a.encrypt(h)
+        
+        return h
+    
+    def _tdes_encrypt(self, key: bytes, data: bytes) -> bytes:
+        """3DES CBC encrypt with zero IV"""
+        if not CRYPTO_AVAILABLE:
+            raise RuntimeError("pycryptodome required")
+        cipher = DES3.new(key, DES3.MODE_CBC, bytes(8))
+        return cipher.encrypt(data)
+    
+    def _tdes_decrypt(self, key: bytes, data: bytes) -> bytes:
+        """3DES CBC decrypt with zero IV"""
+        if not CRYPTO_AVAILABLE:
+            raise RuntimeError("pycryptodome required")
+        cipher = DES3.new(key, DES3.MODE_CBC, bytes(8))
+        return cipher.decrypt(data)
+    
+    def _compute_session_key(self, key_material: bytes) -> bytes:
+        """
+        Compute session key from key material.
+        KSenc = SHA1(K.IFD XOR K.ICC || 00000001)[:16] with parity adjustment
+        """
+        d = key_material + bytes([0x00, 0x00, 0x00, 0x01])
+        h = hashlib.sha1(d).digest()
+        
+        # Take first 16 bytes and adjust parity
+        key = bytearray(h[:16])
+        for i in range(16):
+            b = key[i]
+            parity = bin(b).count('1') % 2
+            if parity == 0:
+                key[i] ^= 1
+        
+        return bytes(key)
+    
+    def mutual_authenticate(self) -> bool:
+        """
+        Perform Mutual Authentication to establish session key.
+        Based on 別添1 セキュアメッセージングセッション鍵交換
+        
+        Returns True if successful, sets self.ks_enc
+        """
+        if not CRYPTO_AVAILABLE:
+            logger.error("pycryptodome required for mutual authentication")
+            return False
+        
+        # Step 1: Get challenge from card
+        rnd_icc = self.get_challenge()
+        if not rnd_icc:
+            logger.error("Failed to get challenge from card")
+            return False
+        
+        logger.info(f"RND.ICC: {toHexString(list(rnd_icc))}")
+        
+        # Step 2: Generate terminal random and key material
+        rnd_ifd = os.urandom(8)
+        k_ifd = os.urandom(16)
+        
+        logger.info(f"RND.IFD: {toHexString(list(rnd_ifd))}")
+        logger.info(f"K.IFD: {toHexString(list(k_ifd))}")
+        
+        # Step 3: Build and encrypt S = RND.IFD || RND.ICC || K.IFD
+        s = rnd_ifd + rnd_icc + k_ifd  # 32 bytes
+        s_padded = self._pad_data(s)    # 40 bytes with padding
+        
+        e_ifd = self._tdes_encrypt(self.K_ENC_INIT, s_padded)
+        m_ifd = self._compute_retail_mac(self.K_MAC_INIT, e_ifd)
+        
+        logger.info(f"E_IFD: {toHexString(list(e_ifd))}")
+        logger.info(f"M_IFD: {toHexString(list(m_ifd))}")
+        
+        # Step 4: Send MUTUAL AUTHENTICATE command
+        # 00 82 00 00 28 [E_IFD 32 bytes] [M_IFD 8 bytes] 00
+        cmd_data = list(e_ifd) + list(m_ifd)
+        cmd = [0x00, 0x82, 0x00, 0x00, len(cmd_data)] + cmd_data + [0x00]
+        
+        data, sw1, sw2 = self.send_apdu(cmd)
+        
+        if sw1 != 0x90:
+            logger.error(f"MUTUAL AUTHENTICATE failed: SW={sw1:02X}{sw2:02X}")
+            return False
+        
+        if len(data) != 40:
+            logger.error(f"Invalid response length: {len(data)} (expected 40)")
+            return False
+        
+        # Step 5: Parse response
+        e_icc = bytes(data[:32])
+        m_icc = bytes(data[32:40])
+        
+        logger.info(f"E_ICC: {toHexString(list(e_icc))}")
+        logger.info(f"M_ICC: {toHexString(list(m_icc))}")
+        
+        # Step 6: Verify MAC
+        computed_mac = self._compute_retail_mac(self.K_MAC_INIT, e_icc)
+        if computed_mac != m_icc:
+            logger.error("MAC verification failed")
+            return False
+        
+        # Step 7: Decrypt response
+        decrypted = self._tdes_decrypt(self.K_ENC_INIT, e_icc)
+        decrypted = self._unpad_data(decrypted)
+        
+        if len(decrypted) < 32:
+            logger.error(f"Invalid decrypted length: {len(decrypted)}")
+            return False
+        
+        rnd_icc_resp = decrypted[:8]
+        rnd_ifd_resp = decrypted[8:16]
+        k_icc = decrypted[16:32]
+        
+        # Step 8: Verify RND values
+        if rnd_icc_resp != rnd_icc:
+            logger.error("RND.ICC mismatch")
+            return False
+        
+        if rnd_ifd_resp != rnd_ifd:
+            logger.error("RND.IFD mismatch")
+            return False
+        
+        # Step 9: Compute session key
+        key_material = bytes(a ^ b for a, b in zip(k_ifd, k_icc))
+        self.ks_enc = self._compute_session_key(key_material)
+        
+        logger.info(f"Session key established: {toHexString(list(self.ks_enc))}")
+        
+        return True
+    
+    def verify_card_number(self, card_number: str) -> bool:
+        """
+        Verify card number (在留カード等番号による認証).
+        Card number is 12 characters (e.g., "AB12345678CD").
+        
+        Must be called after mutual_authenticate().
+        Uses Secure Messaging with session key.
+        """
+        if not self.ks_enc:
+            logger.error("Session key not established")
+            return False
+        
+        if len(card_number) != 12:
+            logger.error(f"Invalid card number length: {len(card_number)} (expected 12)")
+            return False
+        
+        # Step 1: Pad card number to 16 bytes
+        card_bytes = card_number.encode('ascii')
+        card_padded = self._pad_data(card_bytes)  # 12 + 0x80 + padding = 16 bytes
+        
+        logger.info(f"Card number padded: {toHexString(list(card_padded))}")
+        
+        # Step 2: Encrypt with session key
+        encrypted_card = self._tdes_encrypt(self.ks_enc, card_padded)
+        
+        logger.info(f"Encrypted card#: {toHexString(list(encrypted_card))}")
+        
+        # Step 3: Build VERIFY command with Secure Messaging
+        # CLA=08 (SM), INS=20, P1=00, P2=86
+        # Data: 86 11 01 [encrypted card# 16 bytes]
+        # 86 = Cryptogram tag, 11 = length (17), 01 = padding indicator
+        sm_data = [0x86, 0x11, 0x01] + list(encrypted_card)
+        cmd = [0x08, 0x20, 0x00, 0x86, len(sm_data)] + sm_data
+        
+        data, sw1, sw2 = self.send_apdu(cmd)
+        
+        if sw1 == 0x90:
+            self.authenticated = True
+            logger.info("Card number verified successfully")
+            return True
+        else:
+            logger.error(f"VERIFY failed: SW={sw1:02X}{sw2:02X}")
+            return False
+    
+    def read_binary_sm(self, ef_id: int, max_length: int = 8000) -> Optional[bytes]:
+        """
+        Read binary data with Secure Messaging.
+        
+        Args:
+            ef_id: Short EF ID (0x01-0x1F)
+            max_length: Maximum bytes to read
+        
+        Returns:
+            Decrypted data or None
+        """
+        if not self.ks_enc or not self.authenticated:
+            logger.error("Not authenticated")
+            return None
+        
+        # READ BINARY with SM
+        # CLA=08, INS=B0, P1=0x80|ef_id (short EF), P2=00 (offset)
+        # Data field for SM: 96 02 00 00 (expected length DO)
+        # Le = 00 00 (extended)
+        
+        all_data = bytearray()
+        offset = 0
+        
+        while offset < max_length:
+            # P1 = 0x80 | ef_id for first read, then use offset
+            if offset == 0:
+                p1 = 0x80 | ef_id
+                p2 = 0x00
+            else:
+                p1 = (offset >> 8) & 0x7F
+                p2 = offset & 0xFF
+            
+            # SM data: 96 02 [expected length]
+            chunk_size = min(256, max_length - offset)
+            sm_data = [0x96, 0x02, (chunk_size >> 8) & 0xFF, chunk_size & 0xFF]
+            
+            # Extended length APDU
+            cmd = [0x08, 0xB0, p1, p2, 0x00, 0x00, len(sm_data)] + sm_data + [0x00, 0x00]
+            
+            data, sw1, sw2 = self.send_apdu(cmd)
+            
+            if sw1 != 0x90:
+                if offset == 0:
+                    logger.error(f"READ BINARY failed: SW={sw1:02X}{sw2:02X}")
+                    return None
+                else:
+                    break  # End of file
+            
+            if len(data) < 4:
+                break
+            
+            # Parse SM response: 86 82 [len] 01 [encrypted data]
+            if data[0] != 0x86:
+                logger.warning(f"Unexpected tag: {data[0]:02X}")
+                break
+            
+            # Get length (could be 1 or 2 bytes)
+            if data[1] == 0x82:
+                data_len = (data[2] << 8) | data[3]
+                enc_data = bytes(data[4:4+data_len])
+            elif data[1] == 0x81:
+                data_len = data[2]
+                enc_data = bytes(data[3:3+data_len])
+            else:
+                data_len = data[1]
+                enc_data = bytes(data[2:2+data_len])
+            
+            # Skip padding indicator (first byte after tag/len)
+            if len(enc_data) > 0 and enc_data[0] == 0x01:
+                enc_data = enc_data[1:]
+            
+            # Decrypt
+            if len(enc_data) % 8 != 0:
+                # Pad to 8-byte boundary for decryption
+                enc_data = enc_data + bytes(8 - (len(enc_data) % 8))
+            
+            decrypted = self._tdes_decrypt(self.ks_enc, enc_data)
+            decrypted = self._unpad_data(decrypted)
+            
+            all_data.extend(decrypted)
+            offset += len(decrypted)
+            
+            if len(decrypted) < chunk_size:
+                break  # End of file
+        
+        return bytes(all_data) if all_data else None
+    
+    def read_binary_plain(self, ef_id: int, max_length: int = 256) -> Optional[bytes]:
+        """Read binary without SM (for free access files)"""
+        all_data = bytearray()
+        offset = 0
+        
+        while offset < max_length:
+            p1 = 0x80 | ef_id if offset == 0 else (offset >> 8) & 0x7F
+            p2 = 0x00 if offset == 0 else offset & 0xFF
+            
+            # Standard READ BINARY
+            cmd = [0x00, 0xB0, p1, p2, 0x00]
+            data, sw1, sw2 = self.send_apdu(cmd)
+            
+            if sw1 == 0x6C:
+                # Retry with correct length
+                cmd = [0x00, 0xB0, p1, p2, sw2]
+                data, sw1, sw2 = self.send_apdu(cmd)
+            
+            if sw1 != 0x90:
+                break
+            
+            all_data.extend(data)
+            offset += len(data)
+            
+            if len(data) < 256:
+                break
+        
+        return bytes(all_data) if all_data else None
+    
+    def _parse_tlv_data(self, data: bytes, tag: int) -> Optional[bytes]:
+        """Extract data from TLV structure"""
+        i = 0
+        while i < len(data):
+            t = data[i]
+            i += 1
+            
+            if i >= len(data):
+                break
+            
+            # Get length
+            l = data[i]
+            i += 1
+            
+            if l == 0x81:
+                if i >= len(data):
+                    break
+                l = data[i]
+                i += 1
+            elif l == 0x82:
+                if i + 1 >= len(data):
+                    break
+                l = (data[i] << 8) | data[i + 1]
+                i += 2
+            
+            if i + l > len(data):
+                break
+            
+            v = data[i:i + l]
+            i += l
+            
+            if t == tag:
+                return v
+        
+        return None
+    
+    def read_common_data(self) -> Dict[str, Any]:
+        """
+        Read common data (共通データ要素) - no authentication required.
+        Returns card version, issuer info, etc.
+        """
+        result = {}
+        
+        if not self.select_mf():
+            result["error"] = "Cannot select MF"
+            return result
+        
+        data = self.read_binary_plain(self.EF_MF_COMMON)
+        if data:
+            result["common_data_raw"] = toHexString(list(data))
+            result["common_data_available"] = True
+        
+        return result
+    
+    def read_card_type(self) -> Dict[str, Any]:
+        """
+        Read card type (カード種別) - no authentication required.
+        Returns whether this is 在留カード or 特別永住者証明書.
+        """
+        result = {}
+        
+        if not self.select_mf():
+            result["error"] = "Cannot select MF"
+            return result
+        
+        data = self.read_binary_plain(self.EF_MF_CARD_TYPE)
+        if data:
+            result["card_type_raw"] = toHexString(list(data))
+            # Parse card type
+            if len(data) >= 1:
+                card_type_code = data[0]
+                if card_type_code == 0x01:
+                    result["card_type"] = "在留カード"
+                    result["card_type_en"] = "Residence Card"
+                elif card_type_code == 0x02:
+                    result["card_type"] = "特別永住者証明書"
+                    result["card_type_en"] = "Special Permanent Resident Certificate"
+                else:
+                    result["card_type"] = f"Unknown ({card_type_code:02X})"
+        
+        return result
+    
+    def read_front_image(self) -> Optional[bytes]:
+        """
+        Read front card image (券面(表)イメージ) - requires authentication.
+        Returns JPEG image data (~7000 bytes).
+        """
+        if not self.select_df(self.AID_DF1):
+            logger.error("Cannot select DF1")
+            return None
+        
+        data = self.read_binary_sm(self.EF_DF1_FRONT_IMAGE, 8000)
+        if data:
+            # Parse TLV: D0 82 [len] [JPEG data]
+            jpeg = self._parse_tlv_data(data, 0xD0)
+            return jpeg if jpeg else data
+        
+        return None
+    
+    def read_photo(self) -> Optional[bytes]:
+        """
+        Read face photo (顔写真) - requires authentication.
+        Returns JPEG image data (~3000 bytes).
+        """
+        if not self.select_df(self.AID_DF1):
+            logger.error("Cannot select DF1")
+            return None
+        
+        data = self.read_binary_sm(self.EF_DF1_PHOTO, 4000)
+        if data:
+            # Parse TLV: D1 82 [len] [JPEG data]
+            jpeg = self._parse_tlv_data(data, 0xD1)
+            return jpeg if jpeg else data
+        
+        return None
+    
+    def read_text_data(self) -> Dict[str, Any]:
+        """
+        Read text data from DF2 - requires authentication.
+        Returns parsed text fields (name, nationality, status, etc.)
+        """
+        result = {}
+        
+        if not self.select_df(self.AID_DF2):
+            result["error"] = "Cannot select DF2"
+            return result
+        
+        # Read front text (券面テキスト)
+        front_text = self.read_binary_sm(self.EF_DF2_FRONT_TEXT, 1000)
+        if front_text:
+            result["front_text_raw"] = toHexString(list(front_text))
+            # Parse TLV structure for text fields
+            try:
+                text_str = front_text.decode('utf-8', errors='replace')
+                result["front_text"] = text_str
+            except:
+                pass
+        
+        # Read back text (裏面追記欄)
+        back_text = self.read_binary_sm(self.EF_DF2_BACK_TEXT, 500)
+        if back_text:
+            result["back_text_raw"] = toHexString(list(back_text))
+            try:
+                text_str = back_text.decode('utf-8', errors='replace')
+                result["back_text"] = text_str
+            except:
+                pass
+        
+        # Read address (住居地)
+        address = self.read_binary_sm(self.EF_DF2_ADDRESS, 500)
+        if address:
+            result["address_raw"] = toHexString(list(address))
+            try:
+                addr_str = address.decode('utf-8', errors='replace')
+                result["address"] = addr_str
+            except:
+                pass
+        
+        return result
+    
+    def read_signature(self) -> Dict[str, Any]:
+        """
+        Read electronic signature (電子署名) - no SM required after auth.
+        Returns check code and public key certificate.
+        """
+        result = {}
+        
+        if not self.select_df(self.AID_DF3):
+            result["error"] = "Cannot select DF3"
+            return result
+        
+        # Read signature file (plain read, no SM)
+        data = self.read_binary_plain(self.EF_DF3_SIGNATURE, 2000)
+        if data:
+            result["signature_raw"] = toHexString(list(data[:64]))  # First 64 bytes preview
+            result["signature_size"] = len(data)
+            
+            # Parse: DA 82 01 00 [checkcode 256] DB 82 04 B0 [certificate 1200]
+            checkcode = self._parse_tlv_data(data, 0xDA)
+            if checkcode:
+                result["checkcode_size"] = len(checkcode)
+            
+            certificate = self._parse_tlv_data(data, 0xDB)
+            if certificate:
+                result["certificate_size"] = len(certificate)
+                result["certificate_available"] = True
+        
+        return result
     
     def read_basic_info(self) -> Dict[str, Any]:
         """Read basic card information without authentication"""
@@ -1426,111 +1999,97 @@ class ZairyuCardReader:
         except:
             pass
         
-        # Try MRTD application
-        if self.select_mrtd_application():
-            info['mrtd_supported'] = True
-            info['card_type'] = '在留カード (Zairyu Card)'
-            info['note'] = 'BAC authentication required for personal data'
-            info['auth_hint'] = 'Card number + Birth date (YYMMDD) + Expiry date (YYMMDD)'
+        # Select MF and read free access data
+        if self.select_mf():
+            info['mf_selected'] = True
+            
+            # Read card type (free access)
+            card_type_info = self.read_card_type()
+            info.update(card_type_info)
+            
+            # Read common data (free access)
+            common_info = self.read_common_data()
+            info.update(common_info)
+            
+            info['auth_hint'] = 'Card number only (12 characters)'
+            info['auth_method'] = 'MUTUAL_AUTH + VERIFY'
         else:
-            info['mrtd_supported'] = False
-            info['card_type'] = 'Unknown'
+            info['mf_selected'] = False
+            info['error'] = 'Cannot select MF - may not be a Zairyu card'
         
         return info
     
-    def read_with_auth(self, card_number: str, birth_date: str, expiry_date: str) -> Dict[str, Any]:
+    def read_all_data(self, card_number: str) -> Dict[str, Any]:
         """
-        Read Zairyu card with BAC authentication.
-        Uses same method as CCCD since both use ICAO 9303.
+        Read all data from Zairyu card with authentication.
         
         Args:
-            card_number: Card number (様式'在留'の番号 - usually on the card)
-            birth_date: YYMMDD format
-            expiry_date: YYMMDD format (有効期限)
+            card_number: 12-character card number (在留カード等番号)
+                         e.g., "AB12345678CD"
+        
+        Returns:
+            Dict with all card data including images (base64 encoded)
         """
-        # Zairyu card uses ICAO 9303 same as CCCD
-        # Reuse CCCD authentication logic
-        info = self.read_basic_info()
+        import base64
         
-        if not info.get('mrtd_supported'):
-            info['error'] = 'Not an ICAO 9303 card'
-            return info
+        result = {
+            "timestamp": datetime.now().isoformat(),
+            "card_number_input": card_number
+        }
         
-        # Get challenge
-        data, sw1, sw2 = self.send_apdu(APDU.GET_CHALLENGE)
-        if sw1 != 0x90:
-            info['error'] = f'Cannot get challenge: SW={sw1:02X}{sw2:02X}'
-            return info
+        # Step 1: Get basic info
+        basic = self.read_basic_info()
+        result.update(basic)
         
-        info['challenge_received'] = True
-        rnd_ic = bytes(data)
+        # Step 2: Select MF for authentication
+        if not self.select_mf():
+            result["error"] = "Cannot select MF"
+            return result
         
-        if not CRYPTO_AVAILABLE:
-            info['error'] = 'pycryptodome required for BAC authentication'
-            return info
+        # Step 3: Mutual Authentication
+        if not self.mutual_authenticate():
+            result["error"] = "Mutual authentication failed"
+            result["hint"] = "Card may not support this protocol"
+            return result
         
-        # Perform BAC (same as CCCD)
-        rnd_ifd = os.urandom(8)
-        k_ifd = os.urandom(16)
+        result["mutual_auth"] = True
         
-        k_enc, k_mac = BACAuthentication.derive_keys(card_number, birth_date, expiry_date)
+        # Step 4: Verify card number
+        if not self.verify_card_number(card_number):
+            result["error"] = "Card number verification failed"
+            result["hint"] = "Check that the card number is correct (12 characters)"
+            result["authenticated"] = False
+            return result
         
-        s = rnd_ifd + rnd_ic + k_ifd
-        e_ifd = BACAuthentication.encrypt_data(k_enc, s)
-        m_ifd = BACAuthentication.compute_mac(k_mac, e_ifd)
+        result["authenticated"] = True
         
-        cmd_data = e_ifd + m_ifd
-        ext_auth = [0x00, 0x82, 0x00, 0x00, len(cmd_data)] + list(cmd_data)
+        # Step 5: Read all protected data
         
-        data, sw1, sw2 = self.send_apdu(ext_auth)
+        # Read front image
+        front_image = self.read_front_image()
+        if front_image:
+            result["front_image_size"] = len(front_image)
+            result["front_image_base64"] = base64.b64encode(front_image).decode('ascii')
+            result["front_image_type"] = "image/jpeg"
         
-        if sw1 == 0x67:
-            ext_auth_with_le = [0x00, 0x82, 0x00, 0x00, len(cmd_data)] + list(cmd_data) + [0x28]
-            data, sw1, sw2 = self.send_apdu(ext_auth_with_le)
+        # Read photo
+        photo = self.read_photo()
+        if photo:
+            result["photo_size"] = len(photo)
+            result["photo_base64"] = base64.b64encode(photo).decode('ascii')
+            result["photo_type"] = "image/jpeg"
         
-        if sw1 == 0x6C:
-            ext_auth_correct = [0x00, 0x82, 0x00, 0x00, len(cmd_data)] + list(cmd_data) + [sw2]
-            data, sw1, sw2 = self.send_apdu(ext_auth_correct)
+        # Read text data
+        text_data = self.read_text_data()
+        result.update(text_data)
         
-        if sw1 != 0x90:
-            info['authenticated'] = False
-            info['auth_error'] = f'SW={sw1:02X}{sw2:02X}'
-            info['hint'] = 'Check card number, birth date, and expiry date format'
-            return info
+        # Read signature
+        signature = self.read_signature()
+        result.update(signature)
         
-        info['authenticated'] = True
+        result["read_complete"] = True
         
-        # Try to read DG1 (MRZ data)
-        select_dg1 = [0x00, 0xA4, 0x02, 0x0C, 0x02, 0x01, 0x01]
-        data, sw1, sw2 = self.send_apdu(select_dg1)
-        if sw1 == 0x90 or sw1 == 0x61:
-            info['dg1_available'] = True
-            
-            # Read DG1
-            read_cmd = [0x00, 0xB0, 0x00, 0x00, 0x00]
-            data, sw1, sw2 = self.send_apdu(read_cmd)
-            
-            if sw1 == 0x90:
-                info['dg1_raw'] = toHexString(data)
-                try:
-                    # Try to extract MRZ
-                    raw_bytes = bytes(data)
-                    mrz_start = raw_bytes.find(b'\x5F\x1F')
-                    if mrz_start >= 0:
-                        length = raw_bytes[mrz_start + 2]
-                        mrz_data = raw_bytes[mrz_start + 3:mrz_start + 3 + length]
-                        info['mrz'] = mrz_data.decode('utf-8', errors='replace')
-                except:
-                    pass
-            elif sw1 == 0x6C:
-                read_cmd = [0x00, 0xB0, 0x00, 0x00, sw2]
-                data, sw1, sw2 = self.send_apdu(read_cmd)
-                if sw1 == 0x90:
-                    info['dg1_raw'] = toHexString(data)
-            elif sw1 == 0x69 and sw2 == 0x88:
-                info['dg1_note'] = 'Secure messaging required'
-        
-        return info
+        return result
 
 
 # =============================================================================
@@ -2067,23 +2626,41 @@ class NFCBridge:
             traceback.print_exc()
             return {"success": False, "error": str(e)}
     
-    def read_zairyu_card(self, card_number: str = "", birth_date: str = "", expiry_date: str = "") -> Dict[str, Any]:
+    def read_zairyu_card(self, card_number: str = "") -> Dict[str, Any]:
         """
         Read Japanese Zairyu (Residence) Card.
-        Uses ICAO 9303 BAC authentication if credentials provided.
+        Based on 在留カード等仕様書 Ver 1.5 (令和6年3月)
+        
+        Authentication: Card number only (12 characters)
+        No PIN retry limit - card number is printed on the card.
         
         Args:
-            card_number: Card number (在留カード番号)
-            birth_date: YYMMDD format
-            expiry_date: YYMMDD format
+            card_number: 12-character card number (在留カード番号)
+                         e.g., "AB12345678CD"
+                         If empty, only reads basic info (free access data)
+        
+        Returns:
+            Dict with card data including:
+            - front_image_base64: Front card image (JPEG)
+            - photo_base64: Face photo (JPEG)
+            - text data: Name, nationality, status, address, etc.
+            - signature: Electronic signature and certificate
         """
         if not SMARTCARD_AVAILABLE:
+            import base64
+            # Simulation mode
             return {
                 "success": True,
                 "data": {
                     "uid": "SIMULATED_ZAIRYU",
-                    "card_type": "在留カード (Simulated)",
-                    "simulated": True
+                    "card_type": "在留カード",
+                    "card_type_en": "Residence Card",
+                    "authenticated": True,
+                    "simulated": True,
+                    "card_number_input": card_number,
+                    "front_text": "氏名: テスト 太郎\n国籍: ベトナム\n在留資格: 技術・人文知識・国際業務",
+                    "address": "東京都渋谷区...",
+                    "note": "Simulation mode - pyscard not installed"
                 }
             }
         
@@ -2095,36 +2672,35 @@ class NFCBridge:
             conn = reader.createConnection()
             conn.connect()
             
-            card_data = {
-                "timestamp": datetime.now().isoformat(),
-                "reader": str(reader)
-            }
-            
-            # Get ATR
-            atr = conn.getATR()
-            if atr:
-                card_data["atr"] = toHexString(atr)
-            
-            # Get UID
-            data, sw1, sw2 = conn.transmit(APDU.GET_UID)
-            if sw1 == 0x90:
-                card_data["uid"] = toHexString(data).replace(" ", "")
-            
             zairyu_reader = ZairyuCardReader(conn)
             
-            # If credentials provided, try full authentication
-            if card_number and birth_date and expiry_date:
-                result = zairyu_reader.read_with_auth(card_number, birth_date, expiry_date)
+            # If card number provided, read all data with authentication
+            if card_number:
+                if len(card_number) != 12:
+                    conn.disconnect()
+                    return {
+                        "success": False,
+                        "error": "INVALID_CARD_NUMBER",
+                        "error_ja": "在留カード番号は12桁である必要があります",
+                        "error_en": "Card number must be 12 characters",
+                        "hint": "Example: AB12345678CD"
+                    }
+                
+                result = zairyu_reader.read_all_data(card_number)
             else:
+                # Read only basic info (free access)
                 result = zairyu_reader.read_basic_info()
             
-            card_data.update(result)
-            
             conn.disconnect()
-            return {"success": True, "data": card_data}
+            return {"success": True, "data": result}
             
         except NoCardException:
-            return {"success": False, "error": "No card on reader"}
+            return {
+                "success": False,
+                "error": "NO_CARD",
+                "error_ja": "カードが検出されません",
+                "error_en": "No card detected on reader"
+            }
         except Exception as e:
             logger.error(f"Zairyu card read error: {e}")
             import traceback
@@ -2313,6 +2889,177 @@ class NFCBridge:
                 "instruction_ja": "サーバーログを確認してください",
                 "instruction_en": "Check the server logs for details"
             }
+    
+    async def api_read_zairyu(self, card_number: str) -> Dict[str, Any]:
+        """
+        API endpoint for reading Zairyu (Residence) Card.
+        Based on 在留カード等仕様書 Ver 1.5 (令和6年3月)
+        
+        Authentication: Card number only (12 characters)
+        No retry limit - card number is printed on the card.
+        
+        Args:
+            card_number: 12-character card number (在留カード等番号)
+                         e.g., "AB12345678CD"
+        
+        Returns:
+            Dict with success/error and data including:
+            - front_image_base64: Front card image (JPEG)
+            - photo_base64: Face photo (JPEG) 
+            - text data: Name, nationality, status, address, etc.
+        """
+        # Step 1: Check if pyscard is available
+        if not SMARTCARD_AVAILABLE:
+            return {
+                "success": False,
+                "error": "NO_SMARTCARD_LIB",
+                "error_ja": "スマートカードライブラリが利用できません",
+                "error_en": "Smart card library not available",
+                "instruction_ja": "pip install pyscard を実行してください",
+                "instruction_en": "Please run: pip install pyscard"
+            }
+        
+        # Step 2: Check if reader is connected
+        reader = self.get_reader()
+        if not reader:
+            return {
+                "success": False,
+                "error": "NO_READER",
+                "error_ja": "カードリーダーが接続されていません",
+                "error_en": "No card reader connected",
+                "instruction_ja": "NFCカードリーダーをUSBポートに接続してください",
+                "instruction_en": "Please connect an NFC card reader to a USB port"
+            }
+        
+        # Step 3: Check if card is present
+        if not self.check_card_present():
+            return {
+                "success": False,
+                "error": "NO_CARD",
+                "error_ja": "カードが検出されません",
+                "error_en": "No card detected on reader",
+                "instruction_ja": "在留カードをカードリーダーの上に置いてください",
+                "instruction_en": "Please place your Residence Card on the reader",
+                "reader": str(reader)
+            }
+        
+        # Step 4: Validate card number format
+        if not card_number:
+            return {
+                "success": False,
+                "error": "NO_CARD_NUMBER",
+                "error_ja": "在留カード番号が入力されていません",
+                "error_en": "Card number is required",
+                "instruction_ja": "12桁の在留カード番号を入力してください",
+                "instruction_en": "Please enter your 12-character card number"
+            }
+        
+        if len(card_number) != 12:
+            return {
+                "success": False,
+                "error": "INVALID_CARD_NUMBER_FORMAT",
+                "error_ja": "在留カード番号は12桁である必要があります",
+                "error_en": "Card number must be 12 characters",
+                "instruction_ja": "カード表面に記載されている12桁の番号を入力してください",
+                "instruction_en": "Enter the 12-character number printed on your card",
+                "hint": "Example: AB12345678CD"
+            }
+        
+        # Step 5: Try to read the card
+        try:
+            conn = reader.createConnection()
+            conn.connect()
+            
+            zairyu_reader = ZairyuCardReader(conn)
+            
+            logger.info(f"API: Reading Zairyu card with number {card_number[:4]}****{card_number[-2:]}")
+            result = zairyu_reader.read_all_data(card_number)
+            
+            conn.disconnect()
+            
+            # Check for errors in result
+            if "error" in result:
+                error_msg = result.get("error", "")
+                
+                if "Mutual authentication failed" in error_msg:
+                    return {
+                        "success": False,
+                        "error": "AUTH_FAILED",
+                        "error_ja": "カードとの認証に失敗しました",
+                        "error_en": "Failed to authenticate with card",
+                        "instruction_ja": "カードを置き直して再試行してください",
+                        "instruction_en": "Please reposition the card and try again"
+                    }
+                elif "Card number verification failed" in error_msg:
+                    return {
+                        "success": False,
+                        "error": "WRONG_CARD_NUMBER",
+                        "error_ja": "在留カード番号が一致しません",
+                        "error_en": "Card number does not match",
+                        "instruction_ja": "カード表面に記載されている正しい番号を入力してください",
+                        "instruction_en": "Please enter the correct number printed on your card"
+                    }
+                elif "Cannot select MF" in error_msg:
+                    return {
+                        "success": False,
+                        "error": "NOT_ZAIRYU_CARD",
+                        "error_ja": "在留カードではありません",
+                        "error_en": "This is not a Residence Card",
+                        "instruction_ja": "在留カードをカードリーダーに置いてください",
+                        "instruction_en": "Please place your Residence Card on the reader"
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "error": "READ_ERROR",
+                        "error_ja": f"読み取りエラー: {error_msg}",
+                        "error_en": f"Read error: {error_msg}",
+                        "instruction_ja": "カードを置き直して再試行してください",
+                        "instruction_en": "Please reposition the card and try again"
+                    }
+            
+            # Success! Return all data
+            response = {
+                "success": True,
+                "timestamp": datetime.now().isoformat(),
+                "reader": str(reader)
+            }
+            response.update(result)
+            
+            logger.info(f"API: Successfully read Zairyu card")
+            return response
+            
+        except NoCardException:
+            return {
+                "success": False,
+                "error": "CARD_REMOVED",
+                "error_ja": "カードが取り除かれました",
+                "error_en": "Card was removed during reading",
+                "instruction_ja": "カードをリーダーの上に置いたままにしてください",
+                "instruction_en": "Keep the card on the reader during the entire process"
+            }
+        except CardConnectionException as e:
+            return {
+                "success": False,
+                "error": "CONNECTION_ERROR",
+                "error_ja": "カードとの通信エラー",
+                "error_en": "Communication error with card",
+                "instruction_ja": "カードを置き直して再試行してください",
+                "instruction_en": "Please reposition the card and try again",
+                "detail": str(e)
+            }
+        except Exception as e:
+            logger.error(f"API read_zairyu error: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "success": False,
+                "error": "UNKNOWN_ERROR",
+                "error_ja": f"予期しないエラー: {str(e)}",
+                "error_en": f"Unexpected error: {str(e)}",
+                "instruction_ja": "サーバーログを確認してください",
+                "instruction_en": "Check the server logs for details"
+            }
 
     async def wait_for_card(self, card_type: str, params: Dict, timeout: int = 30) -> Dict[str, Any]:
         """Wait for card and read it"""
@@ -2349,10 +3096,9 @@ class NFCBridge:
                         params.get('expiry_date', '')
                     )
                 elif card_type == "zairyu":
+                    # Zairyu card only needs card number (12 chars)
                     result = self.read_zairyu_card(
-                        params.get('card_number', ''),
-                        params.get('birth_date', ''),
-                        params.get('expiry_date', '')
+                        params.get('card_number', '')
                     )
                 elif card_type == "mynumber":
                     result = self.read_mynumber_card(
@@ -2430,13 +3176,10 @@ class NFCBridge:
                         params['expiry_date']
                     )
                 elif card_type == "zairyu":
-                    result = self.read_zairyu_card(
-                        params['card_number'],
-                        params['birth_date'],
-                        params['expiry_date']
-                    )
+                    # Zairyu card only needs card number (12 chars)
+                    result = self.read_zairyu_card(params.get('card_number', ''))
                 elif card_type == "mynumber":
-                    result = self.read_mynumber_card(params['pin'])
+                    result = self.read_mynumber_card(params.get('pin', ''))
                 elif card_type == "suica":
                     result = self.read_suica_card()
                 else:
@@ -2453,6 +3196,16 @@ class NFCBridge:
                 result = await self.api_read_mynumber(data.get("pin", ""))
                 await websocket.send(json.dumps({
                     "type": "mynumber_result",
+                    **result
+                }))
+            
+            elif msg_type == "read_zairyu":
+                # Dedicated API for reading Zairyu (Residence) Card
+                # Only needs card number (12 chars) - NO PIN, NO DOB, NO EXPIRY
+                # Returns all data: front image, photo, text, signature
+                result = await self.api_read_zairyu(data.get("card_number", ""))
+                await websocket.send(json.dumps({
+                    "type": "zairyu_result",
                     **result
                 }))
             
@@ -2487,7 +3240,8 @@ class NFCBridge:
             "reader_available": reader is not None,
             "reader_name": str(reader) if reader else None,
             "supported_cards": ["generic", "cccd", "zairyu", "mynumber", "suica"],
-            "version": "2.0.0"
+            "version": "2.1.0",
+            "zairyu_auth": "card_number_only"  # Per 在留カード等仕様書 Ver 1.5
         }))
         
         try:
@@ -2504,8 +3258,9 @@ async def main():
     bridge = NFCBridge()
     
     print("=" * 60)
-    print("  NFC Bridge Server v2.1")
-    print("  Supports: CCCD (Vietnam), My Number (Japan), Generic")
+    print("  NFC Bridge Server v2.1.0")
+    print("  Supports: CCCD, Zairyu (在留カード), My Number, Suica")
+    print("  Zairyu: Card number only (per 在留カード等仕様書 Ver 1.5)")
     print("=" * 60)
     print(f"  URL    : ws://{HOST}:{PORT}")
     print(f"  Reader : {bridge.get_reader() or 'Not detected'}")
