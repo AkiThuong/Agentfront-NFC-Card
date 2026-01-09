@@ -13,6 +13,16 @@ pyscard>=2.0.0
 # Cryptography for BAC authentication (CCCD/ePassport)
 pycryptodome>=3.19.0
 
+# Image processing for JP2 to JPEG conversion
+# Zairyu cards store images in JPEG 2000 format which browsers don't support
+Pillow>=10.0.0
+numpy>=1.24.0
+
+# OCR for extracting text from Zairyu card images
+# Personal info (name, nationality, etc.) is ONLY in images, not text files
+# First run will download ~100MB of language models
+easyocr>=1.7.0
+
 # Windows service support
 pywin32>=306; sys_platform == 'win32'
 
@@ -21,4 +31,4 @@ pyinstaller>=6.0.0
 
 # Optional: nfcpy for direct FeliCa access (Suica full read)
 # Requires libusb - install Zadig driver for your reader
-# nfcpy>=1.0.4
+nfcpy>=1.0.4

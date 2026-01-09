@@ -258,6 +258,51 @@
         .tab .icon {
             font-size: 20px;
         }
+        
+        /* Zairyu card image styles */
+        .zairyu-image-container {
+            text-align: center;
+            margin-bottom: 15px;
+            padding: 15px;
+            background: #f9fafb;
+            border-radius: 12px;
+        }
+        .zairyu-image-container img {
+            max-width: 100%;
+            border-radius: 8px;
+            border: 2px solid #e5e7eb;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .zairyu-photo {
+            max-width: 120px !important;
+        }
+        
+        /* Result item vertical layout */
+        .result-item.vertical {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        .result-item.vertical .result-label {
+            margin-bottom: 8px;
+        }
+        .result-item.vertical .result-value {
+            text-align: left;
+            max-width: 100%;
+            width: 100%;
+        }
+        
+        /* Pre-formatted text in results */
+        .result-pre {
+            background: #f3f4f6;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            width: 100%;
+            white-space: pre-wrap;
+            word-break: break-all;
+            margin: 0;
+            font-family: 'Courier New', monospace;
+        }
     </style>
 </head>
 <body>
@@ -293,6 +338,10 @@
                 <div class="tab" data-type="cccd">
                     <span class="icon">🇻🇳</span>
                     CCCD
+                </div>
+                <div class="tab" data-type="ocr_test">
+                    <span class="icon">🔍</span>
+                    OCRテスト
                 </div>
             </div>
             
@@ -376,27 +425,74 @@
             
             <!-- Zairyu Form -->
             <div id="formZairyu" class="form-container hidden">
+                <div style="text-align: center; padding: 10px 0;">
+                    <div style="font-size: 48px; margin-bottom: 10px;">🛂</div>
+                    <p style="color: #7c3aed; font-weight: 600; margin-bottom: 5px;">
+                        在留カード / Residence Card
+                    </p>
+                </div>
                 <div class="form-group">
                     <label>在留カード番号 (Card Number)</label>
                     <input type="text" id="zairyuNumber" placeholder="AB12345678CD" maxlength="12">
-                    <div class="input-hint">カード表面の番号</div>
+                    <div class="input-hint">カード表面の12桁の番号 (例: AB12345678CD)</div>
                 </div>
-                <div class="form-group">
-                    <label>生年月日 (Date of Birth)</label>
-                    <input type="text" id="zairyuBirth" placeholder="YYMMDD (例: 900115)">
-                    <div class="input-hint">年月日: 900115 = 1990年1月15日</div>
+                <div style="background: #ede9fe; padding: 12px; border-radius: 8px; margin-bottom: 10px; font-size: 13px; color: #5b21b6;">
+                    <strong>📋 読み取れる情報:</strong><br>
+                    • 券面イメージ (表面の画像)<br>
+                    • 顔写真<br>
+                    • 氏名・国籍・在留資格・住所など
                 </div>
-                <div class="form-group">
-                    <label>有効期限 (Expiry Date)</label>
-                    <input type="text" id="zairyuExpiry" placeholder="YYMMDD (例: 350115)">
-                    <div class="input-hint">カード表面の有効期限</div>
+                <div style="background: #d1fae5; padding: 12px; border-radius: 8px; margin-bottom: 15px; font-size: 13px; color: #065f46;">
+                    ✅ <strong>生年月日・有効期限は不要</strong><br>
+                    在留カードはカード番号のみで認証できます
                 </div>
                 <button id="scanZairyuBtn" class="btn-primary" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);">
-                    🔍 認証してスキャン
+                    🔍 カード情報を読み取る
                 </button>
                 <button id="scanZairyuBasicBtn" class="btn-secondary">
                     認証なしで基本情報のみ
                 </button>
+            </div>
+            
+            <!-- OCR Test Form -->
+            <div id="formOcrTest" class="form-container hidden">
+                <div style="text-align: center; padding: 10px 0;">
+                    <div style="font-size: 48px; margin-bottom: 10px;">🔍</div>
+                    <p style="color: #059669; font-weight: 600; margin-bottom: 5px;">
+                        OCRテスト / OCR Test
+                    </p>
+                    <p style="color: #6b7280; font-size: 12px;">
+                        カードの画像をアップロードしてOCR機能をテスト
+                    </p>
+                </div>
+                <div class="form-group">
+                    <label>画像ファイル / Image File</label>
+                    <input type="file" id="ocrImageInput" accept="image/*" style="padding: 10px; border: 2px dashed #d1d5db; border-radius: 8px; width: 100%; box-sizing: border-box;">
+                    <div class="input-hint">JPEG, PNG, TIFF, JP2 など対応</div>
+                </div>
+                
+                <!-- Image preview -->
+                <div id="ocrImagePreview" style="display: none; text-align: center; margin-bottom: 15px;">
+                    <img id="ocrPreviewImg" style="max-width: 100%; max-height: 300px; border-radius: 8px; border: 2px solid #10b981;">
+                </div>
+                
+                <div style="background: #ecfdf5; padding: 12px; border-radius: 8px; margin-bottom: 15px; font-size: 13px; color: #065f46;">
+                    <strong>📋 抽出される情報:</strong><br>
+                    • 氏名 (Name)<br>
+                    • 国籍 (Nationality)<br>
+                    • 在留資格 (Status of Residence)<br>
+                    • 生年月日 (Date of Birth)<br>
+                    • 在留カード番号 (Card Number)<br>
+                    • その他テキスト情報
+                </div>
+                
+                <button id="runOcrBtn" class="btn-primary" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);" disabled>
+                    🔍 OCRを実行 / Run OCR
+                </button>
+                
+                <!-- OCR Results -->
+                <div id="ocrTestResults" style="display: none; margin-top: 15px;">
+                </div>
             </div>
             
             <!-- Scan Animation -->
@@ -445,6 +541,7 @@
             formMyNumber: document.getElementById('formMyNumber'),
             formSuica: document.getElementById('formSuica'),
             formZairyu: document.getElementById('formZairyu'),
+            formOcrTest: document.getElementById('formOcrTest'),
             scanGenericBtn: document.getElementById('scanGenericBtn'),
             scanCCCDBtn: document.getElementById('scanCCCDBtn'),
             scanMyNumberBtn: document.getElementById('scanMyNumberBtn'),
@@ -457,8 +554,11 @@
             cccdExpiry: document.getElementById('cccdExpiry'),
             mynumberPin: document.getElementById('mynumberPin'),
             zairyuNumber: document.getElementById('zairyuNumber'),
-            zairyuBirth: document.getElementById('zairyuBirth'),
-            zairyuExpiry: document.getElementById('zairyuExpiry'),
+            ocrImageInput: document.getElementById('ocrImageInput'),
+            ocrImagePreview: document.getElementById('ocrImagePreview'),
+            ocrPreviewImg: document.getElementById('ocrPreviewImg'),
+            runOcrBtn: document.getElementById('runOcrBtn'),
+            ocrTestResults: document.getElementById('ocrTestResults'),
             scanArea: document.getElementById('scanArea'),
             cancelBtn: document.getElementById('cancelBtn'),
             errorMsg: document.getElementById('errorMsg'),
@@ -495,6 +595,7 @@
             el.formMyNumber.classList.add('hidden');
             el.formSuica.classList.add('hidden');
             el.formZairyu.classList.add('hidden');
+            el.formOcrTest.classList.add('hidden');
             el.scanArea.classList.remove('active');
             el.resultArea.classList.remove('show');
             hideError();
@@ -504,12 +605,14 @@
             if (type === 'mynumber') el.formMyNumber.classList.remove('hidden');
             if (type === 'suica') el.formSuica.classList.remove('hidden');
             if (type === 'zairyu') el.formZairyu.classList.remove('hidden');
+            if (type === 'ocr_test') el.formOcrTest.classList.remove('hidden');
         }
 
         function showScanAnimation() {
             el.formGeneric.classList.add('hidden');
             el.formCCCD.classList.add('hidden');
             el.formMyNumber.classList.add('hidden');
+            el.formOcrTest.classList.add('hidden');
             el.formSuica.classList.add('hidden');
             el.formZairyu.classList.add('hidden');
             el.scanArea.classList.add('active');
@@ -609,6 +712,278 @@
                 </div>
             `;
         }
+        
+        function showZairyuResults(data) {
+            el.scanArea.classList.remove('active');
+            el.formGeneric.classList.add('hidden');
+            el.formCCCD.classList.add('hidden');
+            el.formMyNumber.classList.add('hidden');
+            el.formSuica.classList.add('hidden');
+            el.formZairyu.classList.add('hidden');
+            
+            let html = '';
+            
+            // Header with card type
+            html += `
+                <div style="text-align: center; margin-bottom: 15px;">
+                    <span style="font-size: 48px;">🛂</span>
+                    <h3 style="color: #7c3aed; margin: 10px 0;">在留カード / Residence Card</h3>
+                </div>
+            `;
+            
+            // Show images if available (THIS IS WHERE PERSONAL INFO IS!)
+            if (data.photo_base64) {
+                html += `
+                    <div style="text-align: center; margin-bottom: 15px;">
+                        <p style="font-size: 14px; color: #6b7280; margin-bottom: 8px;">顔写真 / Photo</p>
+                        <img src="data:image/jpeg;base64,${data.photo_base64}" 
+                             alt="Face Photo" 
+                             style="max-width: 150px; border-radius: 8px; border: 2px solid #e5e7eb; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                    </div>
+                `;
+            }
+            
+            if (data.front_image_base64) {
+                html += `
+                    <div style="text-align: center; margin-bottom: 15px;">
+                        <p style="font-size: 14px; color: #059669; margin-bottom: 8px; font-weight: 600;">
+                            📋 券面イメージ / Card Front<br>
+                            <span style="font-size: 11px; font-weight: normal; color: #6b7280;">
+                                （氏名・国籍・在留資格などはこの画像内に含まれています）
+                            </span>
+                        </p>
+                        <img src="data:image/jpeg;base64,${data.front_image_base64}" 
+                             alt="Card Front" 
+                             style="max-width: 100%; border-radius: 8px; border: 3px solid #10b981; box-shadow: 0 4px 12px rgba(16,185,129,0.3);">
+                    </div>
+                `;
+            }
+            
+            // Show card type
+            if (data.card_type) {
+                html += `
+                    <div class="result-item" style="background: #ede9fe; border: 1px solid #c4b5fd;">
+                        <span class="result-label">カード種別</span>
+                        <span class="result-value highlight" style="color: #7c3aed;">${data.card_type}</span>
+                    </div>
+                `;
+                if (data.card_type_en) {
+                    html += `
+                        <div class="result-item">
+                            <span class="result-label">Card Type</span>
+                            <span class="result-value">${data.card_type_en}</span>
+                        </div>
+                    `;
+                }
+            }
+            
+            // Show authentication status
+            if (data.authenticated !== undefined) {
+                html += `
+                    <div class="result-item" style="background: ${data.authenticated ? '#d1fae5' : '#fee2e2'};">
+                        <span class="result-label">認証状態</span>
+                        <span class="result-value">${data.authenticated ? '✅ 認証成功' : '❌ 未認証'}</span>
+                    </div>
+                `;
+            }
+            
+            // Show UID
+            if (data.uid) {
+                html += `
+                    <div class="result-item">
+                        <span class="result-label">UID</span>
+                        <span class="result-value" style="font-family: monospace;">${data.uid}</span>
+                    </div>
+                `;
+            }
+            
+            // ============================================
+            // DF2 Data: Address and Endorsements
+            // (Per 在留カード等仕様書 Ver 1.5 Section 3.3.4)
+            // ============================================
+            
+            // Section header for DF2 data
+            html += `
+                <div style="margin-top: 20px; padding: 10px 0; border-top: 2px solid #e5e7eb;">
+                    <h4 style="color: #374151; font-size: 14px; margin: 0 0 10px 0;">📝 裏面データ / Back of Card Data</h4>
+                </div>
+            `;
+            
+            // Address section (DF2/EF01)
+            if (data.address || data.address_write_date || data.city_code) {
+                html += `<div style="background: #f0fdf4; padding: 12px; border-radius: 8px; margin-bottom: 10px;">`;
+                html += `<div style="font-weight: 600; color: #166534; margin-bottom: 8px;">🏠 住居地 / Address</div>`;
+                
+                if (data.address) {
+                    html += `
+                        <div class="result-item" style="background: white;">
+                            <span class="result-label">住所</span>
+                            <span class="result-value" style="text-align: left;">${data.address}</span>
+                        </div>
+                    `;
+                }
+                if (data.city_code) {
+                    html += `
+                        <div class="result-item" style="background: white;">
+                            <span class="result-label">市町村コード</span>
+                            <span class="result-value">${data.city_code}</span>
+                        </div>
+                    `;
+                }
+                if (data.address_write_date) {
+                    html += `
+                        <div class="result-item" style="background: white;">
+                            <span class="result-label">追記日</span>
+                            <span class="result-value">${data.address_write_date}</span>
+                        </div>
+                    `;
+                }
+                html += `</div>`;
+            }
+            
+            // Work Permission / Endorsements section (DF2/EF02-04)
+            const hasEndorsements = data.work_permission_general || data.work_permission_specific || data.status_update_application;
+            if (hasEndorsements) {
+                html += `<div style="background: #fef3c7; padding: 12px; border-radius: 8px; margin-bottom: 10px;">`;
+                html += `<div style="font-weight: 600; color: #92400e; margin-bottom: 8px;">📋 裏面追記欄 / Endorsements</div>`;
+                
+                if (data.work_permission_general) {
+                    html += `
+                        <div class="result-item" style="background: white; flex-direction: column; align-items: flex-start;">
+                            <span class="result-label" style="margin-bottom: 4px;">資格外活動包括許可</span>
+                            <span class="result-value" style="text-align: left;">${data.work_permission_general}</span>
+                        </div>
+                    `;
+                }
+                if (data.work_permission_specific) {
+                    html += `
+                        <div class="result-item" style="background: white; flex-direction: column; align-items: flex-start;">
+                            <span class="result-label" style="margin-bottom: 4px;">資格外活動個別許可</span>
+                            <span class="result-value" style="text-align: left;">${data.work_permission_specific}</span>
+                        </div>
+                    `;
+                }
+                if (data.status_update_application) {
+                    html += `
+                        <div class="result-item" style="background: white; flex-direction: column; align-items: flex-start;">
+                            <span class="result-label" style="margin-bottom: 4px;">在留期間等更新申請</span>
+                            <span class="result-value" style="text-align: left;">${data.status_update_application}</span>
+                        </div>
+                    `;
+                }
+                html += `</div>`;
+            }
+            
+            // Certificate info
+            if (data.certificate_available || data.signature_size) {
+                html += `
+                    <div class="result-item">
+                        <span class="result-label">電子署名 (DF3)</span>
+                        <span class="result-value">✅ ${data.certificate_size || data.signature_size || ''} bytes</span>
+                    </div>
+                `;
+            }
+            
+            // Timestamp
+            if (data.timestamp) {
+                html += `
+                    <div class="result-item">
+                        <span class="result-label">読取日時</span>
+                        <span class="result-value">${new Date(data.timestamp).toLocaleString('ja-JP')}</span>
+                    </div>
+                `;
+            }
+            
+            // ============================================
+            // OCR Results - Personal info extracted from card image
+            // ============================================
+            const ocrFields = [
+                { key: 'ocr_name', label: '氏名 / Name', highlight: true },
+                { key: 'ocr_card_number', label: '在留カード番号 / Card Number' },
+                { key: 'ocr_nationality', label: '国籍・地域 / Nationality' },
+                { key: 'ocr_date_of_birth', label: '生年月日 / Date of Birth' },
+                { key: 'ocr_gender', label: '性別 / Gender' },
+                { key: 'ocr_status_of_residence', label: '在留資格 / Status of Residence' },
+                { key: 'ocr_period_of_stay', label: '在留期間 / Period of Stay' },
+                { key: 'ocr_expiration_date', label: '在留期間の満了日 / Expiration' },
+                { key: 'ocr_work_permission', label: '就労制限 / Work Permission' },
+                { key: 'ocr_address', label: '住居地 / Address' },
+            ];
+            
+            let hasOcrData = ocrFields.some(f => data[f.key]);
+            
+            if (hasOcrData) {
+                html += `
+                    <div style="margin-top: 20px; padding: 10px 0; border-top: 2px solid #e5e7eb;">
+                        <h4 style="color: #059669; font-size: 14px; margin: 0 0 10px 0;">
+                            🔍 OCR抽出データ / OCR Extracted Data
+                            <span style="font-size: 11px; font-weight: normal; color: #6b7280;">(画像から読み取り)</span>
+                        </h4>
+                    </div>
+                `;
+                
+                html += `<div style="background: #ecfdf5; padding: 12px; border-radius: 8px; border: 1px solid #a7f3d0;">`;
+                
+                for (const field of ocrFields) {
+                    if (data[field.key]) {
+                        const bgStyle = field.highlight ? 'background: white; border: 2px solid #10b981;' : 'background: white;';
+                        const valueStyle = field.highlight ? 'color: #059669; font-size: 15px; font-weight: 700;' : '';
+                        html += `
+                            <div class="result-item" style="${bgStyle}">
+                                <span class="result-label">${field.label}</span>
+                                <span class="result-value" style="${valueStyle}">${data[field.key]}</span>
+                            </div>
+                        `;
+                    }
+                }
+                
+                html += `</div>`;
+            } else if (data.ocr_note) {
+                // OCR not available
+                html += `
+                    <div style="background: #fef3c7; padding: 12px; border-radius: 8px; margin-top: 15px; font-size: 12px; color: #92400e; border: 1px solid #fcd34d;">
+                        <strong>💡 OCR未インストール:</strong><br>
+                        個人情報を画像から抽出するには、EasyOCRをインストールしてください：<br>
+                        <code style="background: #fffbeb; padding: 2px 6px; border-radius: 3px;">pip install easyocr</code>
+                    </div>
+                `;
+            }
+            
+            // OCR raw text (collapsible debug section)
+            if (data.ocr_result && data.ocr_result.raw_text && data.ocr_result.raw_text.length > 0) {
+                html += `
+                    <details style="margin-top: 10px;">
+                        <summary style="cursor: pointer; color: #059669; font-size: 12px;">📝 OCR全テキスト (${data.ocr_result.raw_text.length} regions)</summary>
+                        <div style="margin-top: 8px; font-size: 11px; background: #f0fdf4; padding: 10px; border-radius: 6px;">
+                            ${data.ocr_result.raw_text.map(r => 
+                                `<div style="margin-bottom: 4px; padding: 4px; background: white; border-radius: 4px;">
+                                    <span style="color: #059669; font-weight: 600;">"${r.text}"</span>
+                                    <span style="color: #9ca3af; font-size: 10px; margin-left: 8px;">conf: ${(r.confidence * 100).toFixed(0)}%</span>
+                                </div>`
+                            ).join('')}
+                        </div>
+                    </details>
+                `;
+            }
+            
+            // Debug: Show raw data
+            if (data.address_raw || data.endorsement_1_raw || data.endorsement_2_raw || data.endorsement_3_raw) {
+                html += `
+                    <details style="margin-top: 15px;">
+                        <summary style="cursor: pointer; color: #6b7280; font-size: 12px;">🔧 Debug: Raw Data</summary>
+                        <div style="margin-top: 8px; font-size: 11px; font-family: monospace; background: #f9fafb; padding: 10px; border-radius: 6px; word-break: break-all;">
+                            ${data.address_raw ? `<div><strong>Address (DF2/EF01):</strong> ${data.address_raw}</div>` : ''}
+                            ${data.endorsement_1_raw ? `<div><strong>Endorsement 1 (DF2/EF02):</strong> ${data.endorsement_1_raw}</div>` : ''}
+                            ${data.endorsement_2_raw ? `<div><strong>Endorsement 2 (DF2/EF03):</strong> ${data.endorsement_2_raw}</div>` : ''}
+                            ${data.endorsement_3_raw ? `<div><strong>Endorsement 3 (DF2/EF04):</strong> ${data.endorsement_3_raw}</div>` : ''}
+                        </div>
+                    </details>
+                `;
+            }
+            
+            el.resultContent.innerHTML = html;
+            el.resultArea.classList.add('show');
+        }
 
         // WebSocket connection
         function connect() {
@@ -688,6 +1063,7 @@
                         showResults(displayData);
                         setStatus('connected', '読み取り完了！');
                     } else {
+                        hideScanAnimation();
                         // Show error with instruction
                         const errorMsg = data.error_ja || data.error_en || data.error;
                         const instruction = data.instruction_ja || data.instruction_en || '';
@@ -704,6 +1080,36 @@
                         setStatus('connected', 'エラー');
                         log('My Number error: ' + data.error);
                     }
+                    break;
+                
+                case 'zairyu_result':
+                    // Handle dedicated Zairyu Card API response
+                    if (data.success) {
+                        log('Zairyu card data received');
+                        showZairyuResults(data);
+                        setStatus('connected', '読み取り完了！');
+                    } else {
+                        hideScanAnimation();
+                        // Show error with instruction
+                        const zairyuErrorMsg = data.error_ja || data.error_en || data.error;
+                        const zairyuInstruction = data.instruction_ja || data.instruction_en || '';
+                        
+                        let zairyuFullError = zairyuErrorMsg;
+                        if (zairyuInstruction) {
+                            zairyuFullError += '\n\n💡 ' + zairyuInstruction;
+                        }
+                        
+                        showError(zairyuFullError);
+                        setStatus('connected', 'エラー');
+                        log('Zairyu error: ' + data.error);
+                    }
+                    break;
+                
+                case 'ocr_result':
+                    // Handle OCR test result
+                    log('OCR result received');
+                    showOcrTestResults(data);
+                    setStatus('connected', 'OCR完了');
                     break;
 
                 case 'error':
@@ -820,36 +1226,182 @@
             startScan('suica');
         });
 
-        // Zairyu scan with auth
+        // Zairyu scan with auth - uses dedicated read_zairyu API (card number only!)
         el.scanZairyuBtn.addEventListener('click', () => {
-            const cardNumber = el.zairyuNumber.value.trim();
-            const birthDate = el.zairyuBirth.value.trim();
-            const expiryDate = el.zairyuExpiry.value.trim();
+            const cardNumber = el.zairyuNumber.value.trim().toUpperCase();
 
             if (!cardNumber) {
-                showError('在留カード番号を入力してください');
+                showError('在留カード番号を入力してください\nPlease enter your card number');
                 return;
             }
-            if (birthDate.length !== 6) {
-                showError('生年月日はYYMMDD形式（6桁）で入力してください');
-                return;
-            }
-            if (expiryDate.length !== 6) {
-                showError('有効期限はYYMMDD形式（6桁）で入力してください');
+            if (cardNumber.length !== 12) {
+                showError('在留カード番号は12桁である必要があります\nCard number must be 12 characters');
                 return;
             }
 
-            startScan('zairyu', {
-                card_number: cardNumber,
-                birth_date: birthDate,
-                expiry_date: expiryDate
-            });
+            readZairyuCard(cardNumber);
         });
 
         // Zairyu scan without auth
         el.scanZairyuBasicBtn.addEventListener('click', () => {
             startScan('zairyu', {});
         });
+        
+        // ============================================
+        // OCR Test - Upload image and run OCR
+        // ============================================
+        
+        // Handle image file selection
+        el.ocrImageInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) {
+                el.ocrImagePreview.style.display = 'none';
+                el.runOcrBtn.disabled = true;
+                return;
+            }
+            
+            // Show preview
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                el.ocrPreviewImg.src = e.target.result;
+                el.ocrImagePreview.style.display = 'block';
+                el.runOcrBtn.disabled = false;
+                el.ocrTestResults.style.display = 'none';
+            };
+            reader.readAsDataURL(file);
+            
+            log('Image selected: ' + file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)');
+        });
+        
+        // Run OCR on selected image
+        el.runOcrBtn.addEventListener('click', () => {
+            const file = el.ocrImageInput.files[0];
+            if (!file) {
+                showError('画像ファイルを選択してください');
+                return;
+            }
+            
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                showError('サーバーに接続されていません');
+                return;
+            }
+            
+            // Convert file to base64
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const base64Data = e.target.result.split(',')[1]; // Remove data:image/xxx;base64, prefix
+                
+                el.runOcrBtn.disabled = true;
+                el.runOcrBtn.textContent = '🔄 OCR実行中...';
+                hideError();
+                log('Running OCR on uploaded image...');
+                
+                ws.send(JSON.stringify({
+                    type: 'test_ocr',
+                    image_base64: base64Data,
+                    filename: file.name
+                }));
+            };
+            reader.readAsDataURL(file);
+        });
+        
+        // Display OCR test results
+        function showOcrTestResults(data) {
+            el.runOcrBtn.disabled = false;
+            el.runOcrBtn.textContent = '🔍 OCRを実行 / Run OCR';
+            
+            let html = '';
+            
+            if (data.error) {
+                html = `
+                    <div style="background: #fee2e2; padding: 12px; border-radius: 8px; color: #991b1b;">
+                        <strong>❌ エラー:</strong> ${data.error}
+                    </div>
+                `;
+            } else if (data.ocr_result) {
+                const ocr = data.ocr_result;
+                
+                // Show parsed fields
+                if (ocr.parsed_fields && Object.keys(ocr.parsed_fields).length > 0) {
+                    html += `
+                        <div style="background: #ecfdf5; padding: 12px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #a7f3d0;">
+                            <div style="font-weight: 600; color: #059669; margin-bottom: 10px;">✅ 抽出されたフィールド</div>
+                    `;
+                    
+                    const fieldLabels = {
+                        'name': '氏名 / Name',
+                        'card_number': 'カード番号 / Card Number',
+                        'nationality': '国籍 / Nationality',
+                        'date_of_birth': '生年月日 / Date of Birth',
+                        'gender': '性別 / Gender',
+                        'status_of_residence': '在留資格 / Status',
+                        'period_of_stay': '在留期間 / Period',
+                        'expiration_date': '満了日 / Expiration',
+                        'work_permission': '就労制限 / Work',
+                        'address': '住所 / Address'
+                    };
+                    
+                    for (const [key, value] of Object.entries(ocr.parsed_fields)) {
+                        const label = fieldLabels[key] || key;
+                        const isName = key === 'name';
+                        html += `
+                            <div style="display: flex; justify-content: space-between; padding: 6px 10px; background: white; border-radius: 4px; margin-bottom: 4px; ${isName ? 'border: 2px solid #10b981;' : ''}">
+                                <span style="color: #6b7280; font-size: 12px;">${label}</span>
+                                <span style="font-weight: ${isName ? '700' : '500'}; color: ${isName ? '#059669' : '#1f2937'}; font-size: ${isName ? '14px' : '13px'};">${value}</span>
+                            </div>
+                        `;
+                    }
+                    html += `</div>`;
+                } else {
+                    html += `
+                        <div style="background: #fef3c7; padding: 12px; border-radius: 8px; margin-bottom: 10px; color: #92400e;">
+                            ⚠️ パース可能なフィールドが見つかりませんでした
+                        </div>
+                    `;
+                }
+                
+                // Show raw OCR text
+                if (ocr.raw_text && ocr.raw_text.length > 0) {
+                    html += `
+                        <details style="margin-top: 10px;">
+                            <summary style="cursor: pointer; color: #059669; font-size: 12px; font-weight: 600;">
+                                📝 OCR全テキスト (${ocr.raw_text.length} regions)
+                            </summary>
+                            <div style="margin-top: 8px; font-size: 11px; background: #f0fdf4; padding: 10px; border-radius: 6px; max-height: 200px; overflow-y: auto;">
+                                ${ocr.raw_text.map(r => 
+                                    `<div style="margin-bottom: 4px; padding: 4px; background: white; border-radius: 4px;">
+                                        <span style="color: #059669; font-weight: 600;">"${r.text}"</span>
+                                        <span style="color: #9ca3af; font-size: 10px; margin-left: 8px;">conf: ${(r.confidence * 100).toFixed(0)}%</span>
+                                    </div>`
+                                ).join('')}
+                            </div>
+                        </details>
+                    `;
+                }
+            }
+            
+            el.ocrTestResults.innerHTML = html;
+            el.ocrTestResults.style.display = 'block';
+            log('OCR test complete');
+        }
+        
+        // Dedicated Zairyu Card API call (card number only - per 在留カード等仕様書 Ver 1.5)
+        function readZairyuCard(cardNumber) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                showError('サーバーに接続されていません');
+                return;
+            }
+            
+            hideError();
+            setStatus('reading', '在留カードを読み取り中...');
+            showScanAnimation();
+            log('Reading Zairyu card with number: ' + cardNumber.slice(0,4) + '****' + cardNumber.slice(-2));
+            
+            ws.send(JSON.stringify({
+                type: 'read_zairyu',
+                card_number: cardNumber
+            }));
+        }
 
         // Cancel
         el.cancelBtn.addEventListener('click', () => {
@@ -879,12 +1431,6 @@
         });
         el.zairyuNumber.addEventListener('input', (e) => {
             e.target.value = e.target.value.toUpperCase().slice(0, 12);
-        });
-        el.zairyuBirth.addEventListener('input', (e) => {
-            e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
-        });
-        el.zairyuExpiry.addEventListener('input', (e) => {
-            e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
         });
 
         // Start connection

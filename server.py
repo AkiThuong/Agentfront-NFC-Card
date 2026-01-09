@@ -61,6 +61,33 @@ except ImportError:
     print("INFO: nfcpy not installed - Suica balance reading limited")
     print("Install: pip install nfcpy")
 
+# Try to import Pillow for JP2 (JPEG 2000) to JPEG conversion
+# Zairyu cards store images in JPEG 2000 format which browsers don't support
+try:
+    from PIL import Image
+    import io
+    PILLOW_AVAILABLE = True
+except ImportError:
+    PILLOW_AVAILABLE = False
+    print("WARNING: Pillow not installed - JP2 images may not display in browsers")
+    print("Install: pip install Pillow")
+
+# Try to import EasyOCR for extracting text from card images
+# Zairyu card personal info (name, nationality, etc.) is only in images
+try:
+    import easyocr
+    EASYOCR_AVAILABLE = True
+    # Initialize OCR reader (lazy loading - created on first use)
+    _ocr_reader = None
+except ImportError:
+    EASYOCR_AVAILABLE = False
+    _ocr_reader = None
+    print("INFO: EasyOCR not installed - card text extraction disabled")
+    print("Install: pip install easyocr")
+
+import re
+import numpy as np
+
 # Configuration
 HOST = "localhost"
 PORT = 3005
@@ -1412,21 +1439,16 @@ class ZairyuCardReader:
     EF_DF1_FRONT_IMAGE = 0x05   # 券面(表)イメージ - ~7000 bytes JPEG
     EF_DF1_PHOTO = 0x06         # 顔写真 - ~3000 bytes JPEG
     
-    # DF2 files (needs auth)
-    EF_DF2_FRONT_TEXT = 0x01    # 券面(様式)テキスト
-    EF_DF2_BACK_TEXT = 0x02     # 裏面追記欄テキスト
-    EF_DF2_PHOTO_HASH = 0x06    # 顔写真(ハッシュ)
-    EF_DF2_ADDRESS = 0x07       # 住居地
+    # DF2 files (needs auth) - Per 在留カード等仕様書 Ver 1.5 Section 3.3.4
+    # DF2 contains ADDRESS and ENDORSEMENTS only, NOT personal info!
+    EF_DF2_ADDRESS = 0x01           # 住居地（裏面追記）- Address (back of card)
+    EF_DF2_ENDORSEMENT_1 = 0x02     # 裏面資格外活動包括許可欄 - Endorsement section 1
+    EF_DF2_ENDORSEMENT_2 = 0x03     # 裏面資格外活動個別許可欄 - Endorsement section 2  
+    EF_DF2_ENDORSEMENT_3 = 0x04     # 裏面在留期間等更新申請欄 - Endorsement section 3
     
     # DF3 files (free access after auth)
     EF_DF3_SIGNATURE = 0x02     # 電子署名 (checkcode + certificate)
     
-    # Mutual Authentication keys (from spec - fixed initial keys)
-    # These are the default keys for session establishment
-    K_ENC_INIT = bytes([0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41,
-                        0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41])
-    K_MAC_INIT = bytes([0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
-                        0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42])
     
     def __init__(self, connection):
         self.connection = connection
@@ -1436,9 +1458,18 @@ class ZairyuCardReader:
     
     def send_apdu(self, apdu: List[int]) -> tuple:
         """Send APDU and return response"""
-        data, sw1, sw2 = self.connection.transmit(apdu)
-        logger.debug(f"APDU: {toHexString(apdu)} -> SW={sw1:02X}{sw2:02X}")
-        return data, sw1, sw2
+        try:
+            data, sw1, sw2 = self.connection.transmit(apdu)
+            # Log at INFO level for important commands
+            if apdu[1] in [0xA4, 0x84, 0x82, 0x20]:  # SELECT, GET CHALLENGE, MUTUAL AUTH, VERIFY
+                logger.info(f"APDU TX: {toHexString(apdu)}")
+                logger.info(f"APDU RX: data={toHexString(data) if data else 'empty'}, SW={sw1:02X}{sw2:02X}")
+            else:
+                logger.debug(f"APDU: {toHexString(apdu)} -> SW={sw1:02X}{sw2:02X}")
+            return data, sw1, sw2
+        except Exception as e:
+            logger.error(f"APDU transmit error: {e}")
+            raise
     
     def get_uid(self) -> Optional[str]:
         """Get card UID"""
@@ -1448,27 +1479,54 @@ class ZairyuCardReader:
         return None
     
     def select_mf(self) -> bool:
-        """Select Master File"""
-        # SELECT MF: 00 A4 04 0C 00
-        cmd = [0x00, 0xA4, 0x04, 0x0C, 0x00]
+        """
+        Select Master File (MF).
+        Per 在留カード等仕様書 Ver 1.5 別添2:
+        SELECT MF by File ID: 00 A4 00 00 02 3F 00
+        """
+        # SELECT MF by File ID 3F00 (per spec 別添2)
+        cmd = [0x00, 0xA4, 0x00, 0x00, 0x02, 0x3F, 0x00]
+        logger.info(f"SELECT MF (by File ID 3F00): {toHexString(cmd)}")
         data, sw1, sw2 = self.send_apdu(cmd)
+        logger.info(f"SELECT MF response: SW={sw1:02X}{sw2:02X}")
+        if sw1 != 0x90:
+            logger.error(f"SELECT MF failed with SW={sw1:02X}{sw2:02X}")
         return sw1 == 0x90
     
     def select_df(self, aid: List[int]) -> bool:
         """Select Dedicated File by AID"""
         # SELECT DF: 00 A4 04 0C Lc [AID]
         cmd = [0x00, 0xA4, 0x04, 0x0C, len(aid)] + aid
+        logger.info(f"SELECT DF: AID={toHexString(aid[:8])}...")
         data, sw1, sw2 = self.send_apdu(cmd)
-        return sw1 == 0x90
+        if sw1 == 0x90:
+            logger.info("DF selected successfully")
+            return True
+        else:
+            logger.error(f"SELECT DF failed: SW={sw1:02X}{sw2:02X}")
+            return False
     
     def get_challenge(self) -> Optional[bytes]:
         """Get 8-byte challenge from card"""
         # GET CHALLENGE: 00 84 00 00 08
         cmd = [0x00, 0x84, 0x00, 0x00, 0x08]
+        logger.info(f"GET CHALLENGE: {toHexString(cmd)}")
         data, sw1, sw2 = self.send_apdu(cmd)
+        logger.info(f"GET CHALLENGE response: SW={sw1:02X}{sw2:02X}, data_len={len(data)}")
+        if data:
+            logger.info(f"GET CHALLENGE data: {toHexString(data)}")
         if sw1 == 0x90 and len(data) == 8:
             return bytes(data)
+        elif sw1 == 0x6A and sw2 == 0x82:
+            logger.error("GET CHALLENGE failed: File not found - MF may not be selected")
+        elif sw1 == 0x69 and sw2 == 0x85:
+            logger.error("GET CHALLENGE failed: Conditions not satisfied")
+        elif sw1 == 0x6D and sw2 == 0x00:
+            logger.error("GET CHALLENGE failed: Command not supported")
+        else:
+            logger.error(f"GET CHALLENGE failed: SW={sw1:02X}{sw2:02X}")
         return None
+    
     
     def _pad_data(self, data: bytes) -> bytes:
         """Apply ISO 9797-1 padding (method 2)"""
@@ -1487,7 +1545,10 @@ class ZairyuCardReader:
         return data
     
     def _compute_retail_mac(self, key: bytes, data: bytes) -> bytes:
-        """Compute Retail MAC (ISO 9797-1 Algorithm 3)"""
+        """
+        Compute Retail MAC (ISO 9797-1 Algorithm 3).
+        Uses two-key variant: Ka for CBC-MAC, then D_Kb(H), then E_Ka(H).
+        """
         if not CRYPTO_AVAILABLE:
             raise RuntimeError("pycryptodome required")
         
@@ -1495,6 +1556,10 @@ class ZairyuCardReader:
         ka = key[:8]
         kb = key[8:16]
         
+        logger.debug(f"Retail MAC: Ka={toHexString(list(ka))}, Kb={toHexString(list(kb))}")
+        logger.debug(f"Retail MAC: padded data ({len(padded)} bytes)")
+        
+        # CBC-MAC with Ka
         h = bytes(8)
         cipher_a = DES.new(ka, DES.MODE_ECB)
         for i in range(0, len(padded), 8):
@@ -1502,25 +1567,95 @@ class ZairyuCardReader:
             xored = bytes(a ^ b for a, b in zip(h, block))
             h = cipher_a.encrypt(xored)
         
+        logger.debug(f"Retail MAC after CBC-MAC: {toHexString(list(h))}")
+        
+        # Final: D_Kb(H) then E_Ka(H)
         cipher_b = DES.new(kb, DES.MODE_ECB)
         h = cipher_b.decrypt(h)
+        logger.debug(f"Retail MAC after D_Kb: {toHexString(list(h))}")
         h = cipher_a.encrypt(h)
+        logger.debug(f"Retail MAC final: {toHexString(list(h))}")
         
         return h
     
+    def _tdes_ede_block(self, k1: bytes, k2: bytes, block: bytes, encrypt: bool = True) -> bytes:
+        """
+        Single block 3DES-EDE2 operation (no CBC, just one 8-byte block).
+        EDE = Encrypt-Decrypt-Encrypt with K1, K2, K1
+        """
+        cipher_k1 = DES.new(k1, DES.MODE_ECB)
+        cipher_k2 = DES.new(k2, DES.MODE_ECB)
+        
+        if encrypt:
+            # E_K1(D_K2(E_K1(plaintext)))
+            step1 = cipher_k1.encrypt(block)
+            step2 = cipher_k2.decrypt(step1)
+            step3 = cipher_k1.encrypt(step2)
+            return step3
+        else:
+            # D_K1(E_K2(D_K1(ciphertext)))
+            step1 = cipher_k1.decrypt(block)
+            step2 = cipher_k2.encrypt(step1)
+            step3 = cipher_k1.decrypt(step2)
+            return step3
+    
     def _tdes_encrypt(self, key: bytes, data: bytes) -> bytes:
-        """3DES CBC encrypt with zero IV"""
+        """
+        3DES-EDE2 CBC encrypt with zero IV.
+        Manually implements EDE to handle any key (including K1=K2).
+        """
         if not CRYPTO_AVAILABLE:
             raise RuntimeError("pycryptodome required")
-        cipher = DES3.new(key, DES3.MODE_CBC, bytes(8))
-        return cipher.encrypt(data)
+        
+        k1 = key[:8]
+        k2 = key[8:16]
+        
+        logger.debug(f"TDES encrypt: K1={toHexString(list(k1))}, K2={toHexString(list(k2))}")
+        logger.debug(f"TDES encrypt: data ({len(data)} bytes) = {toHexString(list(data[:32]))}")
+        
+        # CBC mode with manual EDE
+        iv = bytes(8)
+        result = bytearray()
+        prev_block = iv
+        
+        for i in range(0, len(data), 8):
+            block = data[i:i+8]
+            # XOR with previous ciphertext (or IV for first block)
+            xored = bytes(a ^ b for a, b in zip(block, prev_block))
+            # 3DES-EDE encrypt
+            encrypted = self._tdes_ede_block(k1, k2, xored, encrypt=True)
+            result.extend(encrypted)
+            prev_block = encrypted
+        
+        logger.debug(f"TDES encrypt result: {toHexString(list(result))}")
+        return bytes(result)
     
     def _tdes_decrypt(self, key: bytes, data: bytes) -> bytes:
-        """3DES CBC decrypt with zero IV"""
+        """
+        3DES-EDE2 CBC decrypt with zero IV.
+        Manually implements EDE to handle any key (including K1=K2).
+        """
         if not CRYPTO_AVAILABLE:
             raise RuntimeError("pycryptodome required")
-        cipher = DES3.new(key, DES3.MODE_CBC, bytes(8))
-        return cipher.decrypt(data)
+        
+        k1 = key[:8]
+        k2 = key[8:16]
+        
+        # CBC mode with manual EDE
+        iv = bytes(8)
+        result = bytearray()
+        prev_block = iv
+        
+        for i in range(0, len(data), 8):
+            block = data[i:i+8]
+            # 3DES-EDE decrypt
+            decrypted = self._tdes_ede_block(k1, k2, block, encrypt=False)
+            # XOR with previous ciphertext (or IV for first block)
+            xored = bytes(a ^ b for a, b in zip(decrypted, prev_block))
+            result.extend(xored)
+            prev_block = block
+        
+        return bytes(result)
     
     def _compute_session_key(self, key_material: bytes) -> bytes:
         """
@@ -1540,10 +1675,39 @@ class ZairyuCardReader:
         
         return bytes(key)
     
-    def mutual_authenticate(self) -> bool:
+    def _derive_auth_keys(self, card_number: str) -> tuple:
+        """
+        Derive Kenc and Kmac from card number for Mutual Authentication.
+        Per 在留カード等仕様書 Ver 1.5 別添1:
+        Kenc = Kmac = SHA-1(Card Number)[0:16]
+        
+        Args:
+            card_number: 12-character card number (在留カード番号)
+        
+        Returns:
+            (k_enc, k_mac) tuple - both are the same 16-byte key
+        """
+        if len(card_number) != 12:
+            raise ValueError("Card number must be 12 characters")
+        
+        # SHA-1 hash of the card number (ASCII bytes)
+        h = hashlib.sha1(card_number.encode('ascii')).digest()
+        
+        # Use first 16 bytes as the key (TDES 2-key)
+        key = h[:16]
+        
+        logger.info(f"Derived key from card number: {toHexString(list(key))}")
+        
+        # Kenc and Kmac are identical for mutual authentication
+        return key, key
+    
+    def mutual_authenticate(self, card_number: str) -> bool:
         """
         Perform Mutual Authentication to establish session key.
         Based on 別添1 セキュアメッセージングセッション鍵交換
+        
+        Args:
+            card_number: 12-character card number for key derivation
         
         Returns True if successful, sets self.ks_enc
         """
@@ -1551,13 +1715,20 @@ class ZairyuCardReader:
             logger.error("pycryptodome required for mutual authentication")
             return False
         
+        # Derive initial keys from card number (per 在留カード等仕様書 Ver 1.5)
+        k_enc, k_mac = self._derive_auth_keys(card_number)
+        
+        logger.info(f"K_ENC for auth: {toHexString(list(k_enc))}")
+        logger.info(f"K_MAC for auth: {toHexString(list(k_mac))}")
+        
         # Step 1: Get challenge from card
+        logger.info("Mutual Auth Step 1: Getting challenge from card...")
         rnd_icc = self.get_challenge()
         if not rnd_icc:
-            logger.error("Failed to get challenge from card")
+            logger.error("Failed to get challenge from card - check card positioning and type")
             return False
         
-        logger.info(f"RND.ICC: {toHexString(list(rnd_icc))}")
+        logger.info(f"RND.ICC (8 bytes): {toHexString(list(rnd_icc))}")
         
         # Step 2: Generate terminal random and key material
         rnd_ifd = os.urandom(8)
@@ -1567,19 +1738,22 @@ class ZairyuCardReader:
         logger.info(f"K.IFD: {toHexString(list(k_ifd))}")
         
         # Step 3: Build and encrypt S = RND.IFD || RND.ICC || K.IFD
-        s = rnd_ifd + rnd_icc + k_ifd  # 32 bytes
-        s_padded = self._pad_data(s)    # 40 bytes with padding
+        # Per 在留カード等仕様書 Ver 1.5, S is 32 bytes and encrypted WITHOUT padding
+        # E_IFD should be exactly 32 bytes
+        s = rnd_ifd + rnd_icc + k_ifd  # 32 bytes (8 + 8 + 16)
         
-        e_ifd = self._tdes_encrypt(self.K_ENC_INIT, s_padded)
-        m_ifd = self._compute_retail_mac(self.K_MAC_INIT, e_ifd)
+        e_ifd = self._tdes_encrypt(k_enc, s)  # No padding - 32 bytes in, 32 bytes out
+        m_ifd = self._compute_retail_mac(k_mac, e_ifd)
         
         logger.info(f"E_IFD: {toHexString(list(e_ifd))}")
         logger.info(f"M_IFD: {toHexString(list(m_ifd))}")
         
         # Step 4: Send MUTUAL AUTHENTICATE command
-        # 00 82 00 00 28 [E_IFD 32 bytes] [M_IFD 8 bytes] 00
-        cmd_data = list(e_ifd) + list(m_ifd)
+        # Per spec: 00 82 00 00 28 [E_IFD 32 bytes] [M_IFD 8 bytes] 00
+        cmd_data = list(e_ifd) + list(m_ifd)  # 32 + 8 = 40 bytes
         cmd = [0x00, 0x82, 0x00, 0x00, len(cmd_data)] + cmd_data + [0x00]
+        
+        logger.info(f"MUTUAL AUTH cmd length: {len(cmd_data)} (E_IFD={len(e_ifd)}, M_IFD={len(m_ifd)})")
         
         data, sw1, sw2 = self.send_apdu(cmd)
         
@@ -1591,7 +1765,7 @@ class ZairyuCardReader:
             logger.error(f"Invalid response length: {len(data)} (expected 40)")
             return False
         
-        # Step 5: Parse response
+        # Step 5: Parse response - E_ICC is 32 bytes, M_ICC is 8 bytes
         e_icc = bytes(data[:32])
         m_icc = bytes(data[32:40])
         
@@ -1599,17 +1773,21 @@ class ZairyuCardReader:
         logger.info(f"M_ICC: {toHexString(list(m_icc))}")
         
         # Step 6: Verify MAC
-        computed_mac = self._compute_retail_mac(self.K_MAC_INIT, e_icc)
+        computed_mac = self._compute_retail_mac(k_mac, e_icc)
         if computed_mac != m_icc:
             logger.error("MAC verification failed")
+            logger.error(f"Computed: {toHexString(list(computed_mac))}")
+            logger.error(f"Received: {toHexString(list(m_icc))}")
             return False
         
-        # Step 7: Decrypt response
-        decrypted = self._tdes_decrypt(self.K_ENC_INIT, e_icc)
-        decrypted = self._unpad_data(decrypted)
+        # Step 7: Decrypt response - no padding was applied, so 32 bytes decrypt to 32 bytes
+        # Result is: RND.ICC || RND.IFD || K.ICC
+        decrypted = self._tdes_decrypt(k_enc, e_icc)
         
-        if len(decrypted) < 32:
-            logger.error(f"Invalid decrypted length: {len(decrypted)}")
+        logger.info(f"Decrypted ({len(decrypted)} bytes): {toHexString(list(decrypted))}")
+        
+        if len(decrypted) != 32:
+            logger.error(f"Invalid decrypted length: {len(decrypted)} (expected 32)")
             return False
         
         rnd_icc_resp = decrypted[:8]
@@ -1617,19 +1795,33 @@ class ZairyuCardReader:
         k_icc = decrypted[16:32]
         
         # Step 8: Verify RND values
+        # Per spec, response contains: RND.ICC || RND.IFD || K.ICC
+        logger.info(f"RND.ICC from response: {toHexString(list(rnd_icc_resp))}")
+        logger.info(f"RND.IFD from response: {toHexString(list(rnd_ifd_resp))}")
+        logger.info(f"K.ICC: {toHexString(list(k_icc))}")
+        
         if rnd_icc_resp != rnd_icc:
-            logger.error("RND.ICC mismatch")
+            logger.error(f"RND.ICC mismatch!")
+            logger.error(f"  Expected: {toHexString(list(rnd_icc))}")
+            logger.error(f"  Got:      {toHexString(list(rnd_icc_resp))}")
             return False
         
         if rnd_ifd_resp != rnd_ifd:
-            logger.error("RND.IFD mismatch")
+            logger.error(f"RND.IFD mismatch!")
+            logger.error(f"  Expected: {toHexString(list(rnd_ifd))}")
+            logger.error(f"  Got:      {toHexString(list(rnd_ifd_resp))}")
             return False
         
+        logger.info("RND values verified successfully")
+        
         # Step 9: Compute session key
+        # KSenc = h(K.IFD XOR K.ICC || "00000001")[:16] with parity adjustment
         key_material = bytes(a ^ b for a, b in zip(k_ifd, k_icc))
+        logger.info(f"Key material (K.IFD XOR K.ICC): {toHexString(list(key_material))}")
+        
         self.ks_enc = self._compute_session_key(key_material)
         
-        logger.info(f"Session key established: {toHexString(list(self.ks_enc))}")
+        logger.info(f"Session key KSenc established: {toHexString(list(self.ks_enc))}")
         
         return True
     
@@ -1680,6 +1872,7 @@ class ZairyuCardReader:
     def read_binary_sm(self, ef_id: int, max_length: int = 8000) -> Optional[bytes]:
         """
         Read binary data with Secure Messaging.
+        Per 在留カード等仕様書 Ver 1.5 別添2.
         
         Args:
             ef_id: Short EF ID (0x01-0x1F)
@@ -1694,11 +1887,13 @@ class ZairyuCardReader:
         
         # READ BINARY with SM
         # CLA=08, INS=B0, P1=0x80|ef_id (short EF), P2=00 (offset)
-        # Data field for SM: 96 02 00 00 (expected length DO)
+        # Data field for SM: 96 02 [expected length 2 bytes]
         # Le = 00 00 (extended)
         
         all_data = bytearray()
         offset = 0
+        
+        logger.info(f"Reading EF {ef_id:02X} with SM...")
         
         while offset < max_length:
             # P1 = 0x80 | ef_id for first read, then use offset
@@ -1720,46 +1915,66 @@ class ZairyuCardReader:
             
             if sw1 != 0x90:
                 if offset == 0:
-                    logger.error(f"READ BINARY failed: SW={sw1:02X}{sw2:02X}")
+                    logger.error(f"READ BINARY EF{ef_id:02X} failed: SW={sw1:02X}{sw2:02X}")
                     return None
                 else:
+                    logger.info(f"READ BINARY EF{ef_id:02X} ended at offset {offset}: SW={sw1:02X}{sw2:02X}")
                     break  # End of file
             
             if len(data) < 4:
+                logger.warning(f"Response too short: {len(data)} bytes")
                 break
             
-            # Parse SM response: 86 82 [len] 01 [encrypted data]
+            logger.debug(f"SM response: {toHexString(list(data[:32]))}...")
+            
+            # Parse SM response: 86 [len] 01 [encrypted data]
             if data[0] != 0x86:
-                logger.warning(f"Unexpected tag: {data[0]:02X}")
+                logger.warning(f"Unexpected tag: {data[0]:02X} (expected 86)")
                 break
             
-            # Get length (could be 1 or 2 bytes)
-            if data[1] == 0x82:
-                data_len = (data[2] << 8) | data[3]
-                enc_data = bytes(data[4:4+data_len])
-            elif data[1] == 0x81:
-                data_len = data[2]
-                enc_data = bytes(data[3:3+data_len])
+            # Get length (could be 1, 2, or 3 bytes)
+            idx = 1
+            if data[idx] == 0x82:
+                data_len = (data[idx+1] << 8) | data[idx+2]
+                idx += 3
+            elif data[idx] == 0x81:
+                data_len = data[idx+1]
+                idx += 2
             else:
-                data_len = data[1]
-                enc_data = bytes(data[2:2+data_len])
+                data_len = data[idx]
+                idx += 1
             
-            # Skip padding indicator (first byte after tag/len)
-            if len(enc_data) > 0 and enc_data[0] == 0x01:
-                enc_data = enc_data[1:]
+            # Get the cryptogram content (includes padding indicator)
+            enc_content = bytes(data[idx:idx+data_len])
             
-            # Decrypt
+            # First byte is padding indicator (01 = padding present)
+            if len(enc_content) > 0 and enc_content[0] == 0x01:
+                enc_data = enc_content[1:]
+            else:
+                enc_data = enc_content
+                logger.debug(f"No padding indicator byte in cryptogram")
+            
+            logger.debug(f"Encrypted data: {len(enc_data)} bytes")
+            
+            # Decrypt (data should already be 8-byte aligned from card)
             if len(enc_data) % 8 != 0:
-                # Pad to 8-byte boundary for decryption
-                enc_data = enc_data + bytes(8 - (len(enc_data) % 8))
+                # Pad to 8-byte boundary for decryption if needed
+                padding_needed = 8 - (len(enc_data) % 8)
+                enc_data = enc_data + bytes(padding_needed)
+                logger.debug(f"Added {padding_needed} bytes padding for decryption")
             
             decrypted = self._tdes_decrypt(self.ks_enc, enc_data)
+            
+            # Remove ISO 9797-1 padding (0x80 followed by zeros)
             decrypted = self._unpad_data(decrypted)
+            
+            logger.debug(f"Decrypted {len(decrypted)} bytes: {toHexString(list(decrypted[:32]))}...")
             
             all_data.extend(decrypted)
             offset += len(decrypted)
             
             if len(decrypted) < chunk_size:
+                logger.info(f"EF{ef_id:02X} read complete: {len(all_data)} bytes total")
                 break  # End of file
         
         return bytes(all_data) if all_data else None
@@ -1879,16 +2094,34 @@ class ZairyuCardReader:
         """
         Read front card image (券面(表)イメージ) - requires authentication.
         Returns JPEG image data (~7000 bytes).
+        Per 在留カード等仕様書 Ver 1.5, stored in DF1/EF05.
         """
+        logger.info("Reading 券面(表)イメージ from DF1/EF05...")
+        
         if not self.select_df(self.AID_DF1):
-            logger.error("Cannot select DF1")
+            logger.error("Cannot select DF1 for front image")
             return None
         
+        logger.info("DF1 selected for front image")
         data = self.read_binary_sm(self.EF_DF1_FRONT_IMAGE, 8000)
+        
         if data:
+            logger.info(f"Front image raw data: {len(data)} bytes")
             # Parse TLV: D0 82 [len] [JPEG data]
             jpeg = self._parse_tlv_data(data, 0xD0)
-            return jpeg if jpeg else data
+            if jpeg:
+                logger.info(f"Front image JPEG extracted: {len(jpeg)} bytes")
+                # Verify JPEG header (FFD8)
+                if len(jpeg) >= 2 and jpeg[0] == 0xFF and jpeg[1] == 0xD8:
+                    logger.info("Front image has valid JPEG header")
+                else:
+                    logger.warning(f"Front image doesn't have JPEG header: {toHexString(list(jpeg[:4]))}")
+                return jpeg
+            else:
+                logger.warning("Could not extract JPEG from TLV (tag D0)")
+                return data
+        else:
+            logger.warning("Could not read front image data")
         
         return None
     
@@ -1896,60 +2129,691 @@ class ZairyuCardReader:
         """
         Read face photo (顔写真) - requires authentication.
         Returns JPEG image data (~3000 bytes).
+        Per 在留カード等仕様書 Ver 1.5, stored in DF1/EF06.
         """
+        logger.info("Reading 顔写真 from DF1/EF06...")
+        
         if not self.select_df(self.AID_DF1):
-            logger.error("Cannot select DF1")
+            logger.error("Cannot select DF1 for photo")
             return None
         
+        logger.info("DF1 selected for photo")
         data = self.read_binary_sm(self.EF_DF1_PHOTO, 4000)
+        
         if data:
+            logger.info(f"Photo raw data: {len(data)} bytes")
             # Parse TLV: D1 82 [len] [JPEG data]
             jpeg = self._parse_tlv_data(data, 0xD1)
-            return jpeg if jpeg else data
+            if jpeg:
+                logger.info(f"Photo JPEG extracted: {len(jpeg)} bytes")
+                # Verify JPEG header (FFD8)
+                if len(jpeg) >= 2 and jpeg[0] == 0xFF and jpeg[1] == 0xD8:
+                    logger.info("Photo has valid JPEG header")
+                else:
+                    logger.warning(f"Photo doesn't have JPEG header: {toHexString(list(jpeg[:4]))}")
+                return jpeg
+            else:
+                logger.warning("Could not extract JPEG from TLV (tag D1)")
+                return data
+        else:
+            logger.warning("Could not read photo data")
+        
+        return None
+    
+    def _decode_text(self, data: bytes) -> str:
+        """
+        Decode text data trying multiple Japanese encodings.
+        Zairyu cards typically use Shift-JIS (CP932) for Japanese text.
+        """
+        # Try Shift-JIS first (most common for Japanese government cards)
+        for encoding in ['cp932', 'shift-jis', 'utf-8', 'euc-jp', 'iso-2022-jp']:
+            try:
+                decoded = data.decode(encoding)
+                # Check if decoding looks valid (no replacement chars)
+                if '\ufffd' not in decoded:
+                    return decoded
+            except (UnicodeDecodeError, LookupError):
+                continue
+        # Fallback: use cp932 with errors replaced
+        return data.decode('cp932', errors='replace')
+    
+    def _get_ocr_reader(self):
+        """
+        Get or create EasyOCR reader instance (lazy loading).
+        Supports Japanese and English for Zairyu card reading.
+        """
+        global _ocr_reader
+        
+        if not EASYOCR_AVAILABLE:
+            return None
+        
+        if _ocr_reader is None:
+            logger.info("Initializing EasyOCR reader (first time, may take a moment)...")
+            try:
+                # Japanese + English for mixed text on Zairyu cards
+                _ocr_reader = easyocr.Reader(['ja', 'en'], gpu=False)
+                logger.info("EasyOCR reader initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize EasyOCR: {e}")
+                return None
+        
+        return _ocr_reader
+    
+    def extract_text_from_image(self, image_data: bytes) -> Dict[str, Any]:
+        """
+        Extract text from Zairyu card front image using OCR.
+        
+        The front card image contains:
+        - Name (氏名) - e.g., "BUI NGOC YEN"
+        - Card Number (在留カード番号) - e.g., "UH17622299ER"
+        - Date of Birth (生年月日) - e.g., "2005年06月01日"
+        - Gender (性別) - e.g., "女 F." or "男 M."
+        - Nationality (国籍・地域) - e.g., "ベトナム"
+        - Address (住居地) - e.g., "埼玉県川越市..."
+        - Status of Residence (在留資格) - e.g., "留学"
+        - Period of Stay (在留期間) - e.g., "3年11月"
+        - Expiration Date (在留期間の満了日) - e.g., "2029年05月17日"
+        - Work Permission (就労制限) - e.g., "就労不可" or "就労制限なし"
+        
+        Returns:
+            Dict with extracted fields and raw OCR text
+        """
+        result = {
+            "ocr_available": EASYOCR_AVAILABLE,
+            "ocr_success": False,
+            "raw_text": [],
+            "parsed_fields": {}
+        }
+        
+        if not EASYOCR_AVAILABLE:
+            result["error"] = "EasyOCR not installed. Run: pip install easyocr"
+            return result
+        
+        reader = self._get_ocr_reader()
+        if not reader:
+            result["error"] = "Failed to initialize OCR reader"
+            return result
+        
+        try:
+            logger.info(f"Running OCR on image ({len(image_data)} bytes)...")
+            
+            # Convert bytes to numpy array for EasyOCR
+            img = Image.open(io.BytesIO(image_data))
+            img_array = np.array(img)
+            
+            # Run OCR
+            ocr_results = reader.readtext(img_array)
+            
+            # Extract all text - convert numpy types to native Python for JSON serialization
+            all_text = []
+            for (bbox, text, confidence) in ocr_results:
+                # Convert numpy types to native Python types
+                conf_value = float(confidence) if hasattr(confidence, 'item') else confidence
+                # Convert bbox (list of [x,y] points) - each point may be numpy array
+                bbox_native = []
+                for point in bbox:
+                    if hasattr(point, 'tolist'):
+                        bbox_native.append(point.tolist())
+                    elif isinstance(point, (list, tuple)):
+                        bbox_native.append([int(x) if hasattr(x, 'item') else x for x in point])
+                    else:
+                        bbox_native.append(point)
+                
+                all_text.append({
+                    "text": text,
+                    "confidence": round(conf_value, 3),
+                    "bbox": bbox_native
+                })
+                logger.info(f"OCR: '{text}' (conf: {conf_value:.2f})")
+            
+            result["raw_text"] = all_text
+            result["ocr_success"] = True
+            
+            # Parse structured fields from OCR results
+            parsed = self._parse_ocr_results(ocr_results)
+            result["parsed_fields"] = parsed
+            
+            logger.info(f"OCR extracted {len(all_text)} text regions")
+            
+        except Exception as e:
+            logger.error(f"OCR failed: {e}")
+            import traceback
+            traceback.print_exc()
+            result["error"] = str(e)
+        
+        return result
+    
+    def _parse_ocr_results(self, ocr_results: list) -> Dict[str, str]:
+        """
+        Parse OCR results by grouping text into visual lines.
+        Uses Spatial Analysis - optimized for Zairyu Card layout.
+        """
+        parsed = {}
+
+        # ---------------------------------------------------------
+        # 1. HELPER: Group blocks into lines based on Y-coordinate
+        # ---------------------------------------------------------
+        sorted_blocks = sorted(ocr_results, key=lambda x: x[0][0][1])
+        
+        lines = []
+        if sorted_blocks:
+            current_line = [sorted_blocks[0]]
+            current_y = sorted_blocks[0][0][0][1]
+            
+            for block in sorted_blocks[1:]:
+                y = block[0][0][1]
+                # If Y difference is small (< 20px), consider it the same line
+                if abs(y - current_y) < 20:
+                    current_line.append(block)
+                else:
+                    # Sort the completed line by X position (left to right)
+                    current_line.sort(key=lambda x: x[0][0][0])
+                    lines.append(current_line)
+                    current_line = [block]
+                    current_y = y
+            
+            # Append the last line
+            current_line.sort(key=lambda x: x[0][0][0])
+            lines.append(current_line)
+
+        # Convert blocks to simple text strings per line
+        text_lines = []
+        for line in lines:
+            line_text = " ".join([b[1] for b in line])
+            text_lines.append(line_text)
+            logger.info(f"OCR Line: {line_text}")
+
+        # Combine all for fallback regex
+        full_text = " ".join(text_lines)
+
+        # ---------------------------------------------------------
+        # 2. HELPER: Fix Japanese Date Typos (日 often read as 月)
+        # ---------------------------------------------------------
+        def fix_date_typo(date_str):
+            if not date_str:
+                return None
+            # Replace common OCR errors where '日' is read as '月' at the end
+            if re.match(r'.+\d{1,2}月$', date_str) and date_str.count('月') > 1:
+                return date_str[:-1] + "日"
+            return date_str
+
+        # ---------------------------------------------------------
+        # 3. PARSING LOGIC
+        # ---------------------------------------------------------
+
+        # --- A. Card Number (Top Right) ---
+        # Pattern: UH17622299ER
+        card_num_match = re.search(r'([A-Z]{2}\d{8}[A-Z]{2})', full_text.replace(" ", ""))
+        if card_num_match:
+            parsed["card_number"] = card_num_match.group(1)
+            logger.info(f"Extracted card number: {parsed['card_number']}")
+
+        # --- B. Name (Top Left) ---
+        # Strategy: The name is typically the first line that:
+        # 1. Is primarily Latin characters (may have mixed case due to OCR errors)
+        # 2. Is NOT the card number
+        # 3. Does not contain numbers or Japanese characters
+        for line in text_lines:
+            clean_line = line.strip()
+            check_content = clean_line.replace(" ", "")
+            
+            # Skip if it's the card number
+            if parsed.get("card_number") and check_content.upper() == parsed["card_number"]:
+                continue
+                
+            # Skip if line contains numbers (like 2005, 3年)
+            if re.search(r'\d', check_content):
+                continue
+            
+            # Skip if line contains Japanese characters (hiragana, katakana, kanji)
+            if re.search(r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]', check_content):
+                continue
+
+            # Check if it looks like a name:
+            # - Primarily Latin letters (allow mixed case due to OCR errors like "NGoc")
+            # - At least 3 chars total
+            # - Exclude footer text
+            check_upper = check_content.upper()
+            if (check_content.isalpha() and 
+                len(check_content) > 3 and 
+                "VALIDITY" not in check_upper and 
+                "PERIOD" not in check_upper and
+                "CARD" not in check_upper and
+                "FERICD" not in check_upper and
+                "STUDENT" not in check_upper and
+                "SRUDENT" not in check_upper):
+                
+                # Normalize to uppercase for consistency
+                parsed["name"] = clean_line.upper()
+                logger.info(f"Extracted name: {parsed['name']}")
+                break
+
+        # --- C. Date of Birth, Gender, Nationality (Middle Line) ---
+        # Pattern: 2005年06月01日   女 F.   ベトナム
+        dob_pattern = r'(\d{4}\s?年\s?\d{1,2}\s?月\s?\d{1,2}\s?[日月])'
+        
+        for line in text_lines:
+            dob_match = re.search(dob_pattern, line)
+            if dob_match:
+                # 1. Extract DOB
+                raw_dob = dob_match.group(1).replace(" ", "")
+                raw_dob = fix_date_typo(raw_dob)
+                if raw_dob:
+                    parsed["date_of_birth"] = raw_dob.replace("年", "-").replace("月", "-").replace("日", "")
+                    logger.info(f"Extracted DOB: {parsed['date_of_birth']}")
+                
+                # 2. Extract Gender (on the same line)
+                if '女' in line or 'F.' in line:
+                    parsed["gender"] = "女"
+                elif '男' in line or 'M.' in line:
+                    parsed["gender"] = "男"
+                
+                # 3. Extract Nationality (on the same line, after Gender)
+                remaining = re.sub(dob_pattern, '', line)
+                remaining = re.sub(r'(女|F\.|男|M\.)', '', remaining)
+                remaining = re.sub(r'[YMD]', '', remaining).strip()  # Remove OCR noise
+                
+                # Map known nationalities
+                nationalities = [
+                    'ベトナム', 'ヴェトナム', '中国', '韓国', 'フィリピン', 
+                    'インドネシア', 'ネパール', 'ミャンマー', 'タイ', 
+                    'スリランカ', 'バングラデシュ', 'インド', 'ブラジル', 
+                    'ペルー', '米国', 'アメリカ',
+                ]
+                for nationality in nationalities:
+                    if nationality in remaining or nationality in line:
+                        parsed["nationality"] = nationality
+                        break
+                
+                break  # Found DOB line
+
+        # --- D. Period of Stay & Expiration ---
+        # Pattern: 3年11月 (2029年05月17日)
+        # Use STRICT regex to extract actual date inside parens, ignoring garbage
+        # The key is to match the specific date format, not just "anything in parens"
+        period_pattern = r'(\d+\s?年(?:\s?\d+\s?月)?)\s*[（\(].*?(\d{4}\s?年\s?\d{1,2}\s?月\s?\d{1,2}\s?[日月]).*?[）\)]'
+        
+        found_period = False
+        for line in text_lines:
+            match = re.search(period_pattern, line)
+            if match:
+                duration = match.group(1).replace(" ", "")  # e.g., 3年11月
+                expiry_raw = match.group(2).replace(" ", "")  # e.g., 2029年05月17日
+                
+                # Fix common OCR typo where 日 is read as 月
+                expiry_raw = fix_date_typo(expiry_raw)
+                
+                parsed["period_of_stay"] = f"{duration} ({expiry_raw}まで)"
+                parsed["expiration_date"] = expiry_raw
+                logger.info(f"Extracted period: {parsed['period_of_stay']}")
+                found_period = True
+                break
+        
+        # Fallback if strict regex failed (due to OCR garbage in parens - underlined text)
+        if not found_period:
+            # Just extract the duration (X年Y月) - don't try to get the corrupted underlined date
+            # Pattern: X年 or X年Y月 where X is 1-2 digits (not 4-digit like DOB)
+            dur_match = re.search(r'(?<!\d)(\d{1,2}年(?:\d{1,2}月)?)(?!\d)', full_text)
+            if dur_match:
+                parsed["period_of_stay"] = dur_match.group(1)
+                logger.info(f"Extracted period: {parsed['period_of_stay']}")
+        
+        # Try to get expiration from the bottom "XXXX年XX月XX日まで有効" line (usually readable)
+        if "expiration_date" not in parsed:
+            valid_pattern = r'(\d{4}年\d{1,2}月\d{1,2}日)まで有効'
+            valid_match = re.search(valid_pattern, full_text)
+            if valid_match:
+                parsed["expiration_date"] = valid_match.group(1)
+                logger.info(f"Extracted expiration from まで有効: {parsed['expiration_date']}")
+
+        # --- E. Status (e.g. 留学) ---
+        known_statuses = [
+            '留学', '技能実習', '技術・人文知識・国際業務', '家族滞在',
+            '永住者', '定住者', '特定技能', '経営・管理', '高度専門職',
+        ]
+        for line in text_lines:
+            for status in known_statuses:
+                if status in line:
+                    parsed["status_of_residence"] = status
+                    logger.info(f"Extracted status: {parsed['status_of_residence']}")
+                    break
+            if "status_of_residence" in parsed:
+                break
+
+        # --- F. Address ---
+        address_pattern = r'(?:東京都|北海道|京都府|大阪府|.{2,3}県).+?(?:市|区|町|村).+'
+        for line in text_lines:
+            if re.search(address_pattern, line) and not re.search(r'\d{4}年', line):
+                parsed["address"] = line.strip()
+                logger.info(f"Extracted address: {parsed['address']}")
+                break
+
+        # --- G. Work Restrictions ---
+        if '就労不可' in full_text:
+            parsed["work_permission"] = "就労不可"
+        elif '就労制限なし' in full_text:
+            parsed["work_permission"] = "就労制限なし"
+        elif '指定書' in full_text:
+            parsed["work_permission"] = "指定書により指定"
+
+        # --- H. Valid Until (Fallback) ---
+        if "expiration_date" not in parsed:
+            valid_pattern = r'(\d{4}\s?年\s?\d{1,2}\s?月\s?\d{1,2}\s?[日月])\s*まで'
+            valid_match = re.search(valid_pattern, full_text)
+            if valid_match:
+                exp = valid_match.group(1).replace(" ", "")
+                exp = fix_date_typo(exp)
+                parsed["expiration_date"] = exp
+
+        logger.info(f"Final Parsed Data: {parsed}")
+        return parsed
+
+    def _convert_image_to_jpeg(self, data: bytes) -> bytes:
+        """
+        Convert various image formats to standard JPEG for browser display.
+        Zairyu cards store images in formats browsers don't natively support:
+        
+        Per 在留カード等仕様書:
+        - Front image: Often TIFF format (header: 49 49 2A 00 = "II*")
+        - Face photo: JPEG 2000 (JP2) format (header: 00 00 00 0C 6A 50)
+        
+        Returns:
+            Standard JPEG bytes, or original data if already JPEG or conversion fails.
+        """
+        if not PILLOW_AVAILABLE:
+            logger.warning("Pillow not available - cannot convert images to JPEG")
+            return data
+        
+        if len(data) < 4:
+            logger.warning("Image data too short")
+            return data
+        
+        # Check image format by header/signature
+        header = data[:12]
+        
+        # JPEG: starts with FF D8
+        if data[0:2] == b'\xff\xd8':
+            logger.info("Image is already JPEG format")
+            return data
+        
+        # JP2 (JPEG 2000): starts with 00 00 00 0C 6A 50 20 20 (jP  )
+        jp2_signature = b'\x00\x00\x00\x0cjP  '
+        is_jp2 = data.startswith(jp2_signature)
+        
+        # TIFF: starts with 49 49 2A 00 (II*, little-endian) or 4D 4D 00 2A (MM, big-endian)
+        is_tiff_le = data[0:4] == b'II*\x00'  # Little-endian TIFF
+        is_tiff_be = data[0:4] == b'MM\x00*'  # Big-endian TIFF
+        is_tiff = is_tiff_le or is_tiff_be
+        
+        if is_jp2:
+            format_name = "JP2 (JPEG 2000)"
+        elif is_tiff:
+            format_name = "TIFF"
+        else:
+            # Try to open with Pillow anyway - it might recognize other formats
+            format_name = f"Unknown (header: {header[:4].hex()})"
+            logger.info(f"Image format: {format_name}, attempting conversion...")
+        
+        try:
+            logger.info(f"Converting {format_name} image ({len(data)} bytes) to JPEG...")
+            
+            # Open image with Pillow (auto-detects format)
+            img = Image.open(io.BytesIO(data))
+            logger.info(f"Pillow detected format: {img.format}, mode: {img.mode}, size: {img.size}")
+            
+            # Convert to RGB if necessary
+            if img.mode in ('RGBA', 'LA', 'P'):
+                # Handle transparency by compositing on white background
+                if img.mode == 'P':
+                    img = img.convert('RGBA')
+                background = Image.new('RGB', img.size, (255, 255, 255))
+                background.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
+                img = background
+            elif img.mode == 'L':
+                img = img.convert('RGB')
+            elif img.mode != 'RGB':
+                img = img.convert('RGB')
+            
+            # Save as JPEG to bytes buffer
+            output_buffer = io.BytesIO()
+            img.save(output_buffer, format='JPEG', quality=90)
+            jpeg_data = output_buffer.getvalue()
+            
+            logger.info(f"Successfully converted {format_name} to JPEG ({len(jpeg_data)} bytes)")
+            return jpeg_data
+            
+        except Exception as e:
+            logger.error(f"Failed to convert image to JPEG: {e}")
+            import traceback
+            traceback.print_exc()
+            # Return original data as fallback
+            return data
+    
+    def _parse_all_tlv(self, data: bytes) -> Dict[int, bytes]:
+        """
+        Parse all TLV (Tag-Length-Value) entries from data.
+        Returns dict mapping tag -> value.
+        Per 在留カード等仕様書 Ver 1.5, text data uses TLV format.
+        """
+        result = {}
+        i = 0
+        while i < len(data):
+            if i >= len(data):
+                break
+            
+            # Get tag (1 byte)
+            tag = data[i]
+            i += 1
+            
+            if i >= len(data):
+                break
+            
+            # Get length (1 or 3 bytes)
+            length_byte = data[i]
+            i += 1
+            
+            if length_byte == 0x81:
+                # 1 byte extended length
+                if i >= len(data):
+                    break
+                length = data[i]
+                i += 1
+            elif length_byte == 0x82:
+                # 2 byte extended length
+                if i + 1 >= len(data):
+                    break
+                length = (data[i] << 8) | data[i + 1]
+                i += 2
+            else:
+                length = length_byte
+            
+            # Get value
+            if i + length > len(data):
+                break
+            
+            value = data[i:i + length]
+            result[tag] = value
+            i += length
+        
+        return result
+    
+    def _parse_address_data(self, data: bytes) -> Dict[str, str]:
+        """
+        Parse 住居地 (Address) from DF2/EF01.
+        Per 在留カード等仕様書 Ver 1.5 Section 3.3.4.5:
+        
+        Tags in address file (DF2/EF01):
+        - D2: 追記書き込み年月日 (Write date - YYYYMMDD)
+        - D3: 市町村コード (City/municipality code)  
+        - D4: 住居地 (Address text)
+        
+        Note: Personal info (name, nationality, status) is NOT in text files!
+              It's only in DF1 images (front card image and photo).
+        """
+        fields = {}
+        tlv_data = self._parse_all_tlv(data)
+        
+        logger.info(f"Parsed TLV tags from address data: {[f'0x{t:02X}' for t in tlv_data.keys()]}")
+        
+        # Field tag mapping per specification Section 3.3.4.5
+        field_tags = {
+            0xD2: ('address_write_date', '追記書き込み年月日'),
+            0xD3: ('city_code', '市町村コード'),
+            0xD4: ('address', '住居地'),
+        }
+        
+        for tag, (field_key, field_label) in field_tags.items():
+            if tag in tlv_data:
+                raw_value = tlv_data[tag]
+                # Check if value is all zeros (empty field)
+                if all(b == 0 for b in raw_value):
+                    logger.info(f"Tag 0x{tag:02X} ({field_label}): empty (all zeros)")
+                    continue
+                
+                value = self._decode_text(raw_value)
+                if value.strip() and value.strip('\x00'):
+                    fields[field_key] = value.strip().strip('\x00')
+                    logger.info(f"Tag 0x{tag:02X} ({field_label}): {value.strip()[:50]}...")
+                else:
+                    logger.info(f"Tag 0x{tag:02X} ({field_label}): empty after decode")
+        
+        return fields
+    
+    def _parse_endorsement_data(self, data: bytes) -> Optional[str]:
+        """
+        Parse 裏面追記欄 (Back endorsements) from DF2/EF02-04.
+        Per 在留カード等仕様書 Ver 1.5 Section 3.3.4.6-8:
+        
+        Tags in endorsement files:
+        - D5: 資格外活動許可 text (for EF02/03)
+        - D6: 在留期間等更新申請 text (for EF04)
+        """
+        tlv_data = self._parse_all_tlv(data)
+        
+        logger.info(f"Parsed TLV tags from endorsement: {[f'0x{t:02X}' for t in tlv_data.keys()]}")
+        
+        # Try D5 first (most common), then D6
+        for tag in [0xD5, 0xD6]:
+            if tag in tlv_data:
+                raw_value = tlv_data[tag]
+                if all(b == 0 for b in raw_value):
+                    continue
+                value = self._decode_text(raw_value)
+                if value.strip() and value.strip('\x00'):
+                    return value.strip().strip('\x00')
         
         return None
     
     def read_text_data(self) -> Dict[str, Any]:
         """
         Read text data from DF2 - requires authentication.
-        Returns parsed text fields (name, nationality, status, etc.)
+        Per 在留カード等仕様書 Ver 1.5 Section 3.3.4:
+        
+        DF2 contains:
+        - EF01: 住居地 (Address - back of card)
+        - EF02: 裏面資格外活動包括許可欄 (General work permission endorsement)
+        - EF03: 裏面資格外活動個別許可欄 (Specific work permission endorsement)
+        - EF04: 裏面在留期間等更新申請欄 (Status update application endorsement)
+        
+        IMPORTANT: Personal info (name, nationality, status, DOB, gender) 
+        is NOT in text files - it's ONLY in DF1 images!
         """
         result = {}
         
+        logger.info("=" * 50)
+        logger.info("Reading DF2 data (address and endorsements)...")
+        logger.info("NOTE: Personal info is in DF1 images, not text files!")
+        logger.info("=" * 50)
+        
         if not self.select_df(self.AID_DF2):
             result["error"] = "Cannot select DF2"
+            logger.error("Cannot select DF2")
             return result
         
-        # Read front text (券面テキスト)
-        front_text = self.read_binary_sm(self.EF_DF2_FRONT_TEXT, 1000)
-        if front_text:
-            result["front_text_raw"] = toHexString(list(front_text))
-            # Parse TLV structure for text fields
-            try:
-                text_str = front_text.decode('utf-8', errors='replace')
-                result["front_text"] = text_str
-            except:
-                pass
+        logger.info("DF2 selected successfully")
         
-        # Read back text (裏面追記欄)
-        back_text = self.read_binary_sm(self.EF_DF2_BACK_TEXT, 500)
-        if back_text:
-            result["back_text_raw"] = toHexString(list(back_text))
+        # =========================================================
+        # EF01: 住居地 (Address) - NOT "front text"!
+        # Per spec 3.3.4.5: D2=write date, D3=city code, D4=address
+        # =========================================================
+        logger.info("Reading 住居地 (Address - DF2/EF01)...")
+        address_data = self.read_binary_sm(self.EF_DF2_ADDRESS, 500)
+        if address_data:
+            result["address_raw"] = toHexString(list(address_data[:32])) + "..."
+            logger.info(f"Address data read: {len(address_data)} bytes")
+            
             try:
-                text_str = back_text.decode('utf-8', errors='replace')
-                result["back_text"] = text_str
-            except:
-                pass
+                parsed = self._parse_address_data(address_data)
+                result.update(parsed)
+                
+                if 'address' in parsed:
+                    logger.info(f"Address: {parsed['address'][:50]}...")
+            except Exception as e:
+                logger.warning(f"Error parsing address: {e}")
+                # Try raw decode as fallback
+                result["address"] = self._decode_text(address_data)
+        else:
+            logger.warning("Could not read address (DF2/EF01)")
         
-        # Read address (住居地)
-        address = self.read_binary_sm(self.EF_DF2_ADDRESS, 500)
-        if address:
-            result["address_raw"] = toHexString(list(address))
+        # =========================================================
+        # EF02: 裏面資格外活動包括許可欄 (General work permission)
+        # Per spec 3.3.4.6: D5=permission text
+        # This is where "許可（原則週２８時間以内..." comes from
+        # =========================================================
+        logger.info("Reading 裏面資格外活動包括許可欄 (DF2/EF02)...")
+        endorsement_1 = self.read_binary_sm(self.EF_DF2_ENDORSEMENT_1, 200)
+        if endorsement_1:
+            result["endorsement_1_raw"] = toHexString(list(endorsement_1[:32])) + "..."
+            logger.info(f"Endorsement 1 read: {len(endorsement_1)} bytes")
+            
             try:
-                addr_str = address.decode('utf-8', errors='replace')
-                result["address"] = addr_str
-            except:
-                pass
+                text = self._parse_endorsement_data(endorsement_1)
+                if text:
+                    result["work_permission_general"] = text
+                    logger.info(f"General work permission: {text[:50]}...")
+            except Exception as e:
+                logger.warning(f"Error parsing endorsement 1: {e}")
+        else:
+            logger.info("No general work permission data (DF2/EF02)")
+        
+        # =========================================================
+        # EF03: 裏面資格外活動個別許可欄 (Specific work permission)
+        # Per spec 3.3.4.7
+        # =========================================================
+        logger.info("Reading 裏面資格外活動個別許可欄 (DF2/EF03)...")
+        endorsement_2 = self.read_binary_sm(self.EF_DF2_ENDORSEMENT_2, 200)
+        if endorsement_2:
+            result["endorsement_2_raw"] = toHexString(list(endorsement_2[:32])) + "..."
+            try:
+                text = self._parse_endorsement_data(endorsement_2)
+                if text:
+                    result["work_permission_specific"] = text
+                    logger.info(f"Specific work permission: {text[:50]}...")
+            except Exception as e:
+                logger.warning(f"Error parsing endorsement 2: {e}")
+        else:
+            logger.info("No specific work permission data (DF2/EF03)")
+        
+        # =========================================================
+        # EF04: 裏面在留期間等更新申請欄 (Status update application)
+        # Per spec 3.3.4.8
+        # =========================================================
+        logger.info("Reading 裏面在留期間等更新申請欄 (DF2/EF04)...")
+        endorsement_3 = self.read_binary_sm(self.EF_DF2_ENDORSEMENT_3, 200)
+        if endorsement_3:
+            result["endorsement_3_raw"] = toHexString(list(endorsement_3[:32])) + "..."
+            try:
+                text = self._parse_endorsement_data(endorsement_3)
+                if text:
+                    result["status_update_application"] = text
+                    logger.info(f"Status update application: {text[:50]}...")
+            except Exception as e:
+                logger.warning(f"Error parsing endorsement 3: {e}")
+        else:
+            logger.info("No status update application data (DF2/EF04)")
+        
+        # Add important note about where personal info is located
+        result["personal_info_note"] = "氏名・国籍・在留資格などの個人情報はDF1の画像内にのみ存在します"
         
         return result
     
@@ -1987,19 +2851,25 @@ class ZairyuCardReader:
         info = {}
         
         # Get UID
+        logger.info("Reading basic info: Getting UID...")
         uid = self.get_uid()
         if uid:
             info['uid'] = uid
+            logger.info(f"UID: {uid}")
+        else:
+            logger.warning("Could not get UID")
         
         # Get ATR
         try:
             atr = self.connection.getATR()
             if atr:
                 info['atr'] = toHexString(atr)
-        except:
-            pass
+                logger.info(f"ATR: {toHexString(atr)}")
+        except Exception as e:
+            logger.warning(f"Could not get ATR: {e}")
         
         # Select MF and read free access data
+        logger.info("Selecting MF for basic info read...")
         if self.select_mf():
             info['mf_selected'] = True
             
@@ -2042,22 +2912,30 @@ class ZairyuCardReader:
         result.update(basic)
         
         # Step 2: Select MF for authentication
+        logger.info("Step 2: Selecting MF for authentication...")
         if not self.select_mf():
             result["error"] = "Cannot select MF"
+            result["hint"] = "Card may not be a Zairyu card or is not positioned correctly"
             return result
         
-        # Step 3: Mutual Authentication
-        if not self.mutual_authenticate():
+        logger.info("MF selected successfully")
+        
+        # Step 3: Mutual Authentication (using card number to derive keys)
+        logger.info("Step 3: Starting mutual authentication...")
+        if not self.mutual_authenticate(card_number):
             result["error"] = "Mutual authentication failed"
-            result["hint"] = "Card may not support this protocol"
+            result["hint"] = "Card may not support this protocol. Check server logs for details."
+            result["mutual_auth"] = False
             return result
         
         result["mutual_auth"] = True
+        logger.info("Mutual authentication successful!")
         
         # Step 4: Verify card number
+        logger.info(f"Verifying card number: {card_number[:4]}****{card_number[-2:]}")
         if not self.verify_card_number(card_number):
             result["error"] = "Card number verification failed"
-            result["hint"] = "Check that the card number is correct (12 characters)"
+            result["hint"] = "Check that the card number is correct (12 characters, e.g., UH17622299ER)"
             result["authenticated"] = False
             return result
         
@@ -2065,18 +2943,24 @@ class ZairyuCardReader:
         
         # Step 5: Read all protected data
         
-        # Read front image
+        # Read front image (stored as TIFF/JP2, convert to JPEG for browser)
         front_image = self.read_front_image()
         if front_image:
-            result["front_image_size"] = len(front_image)
-            result["front_image_base64"] = base64.b64encode(front_image).decode('ascii')
+            result["front_image_size_original"] = len(front_image)
+            # Convert to JPEG for browser compatibility (TIFF/JP2 not supported)
+            front_image_jpeg = self._convert_image_to_jpeg(front_image)
+            result["front_image_size"] = len(front_image_jpeg)
+            result["front_image_base64"] = base64.b64encode(front_image_jpeg).decode('ascii')
             result["front_image_type"] = "image/jpeg"
         
-        # Read photo
+        # Read photo (stored as JP2, convert to JPEG for browser)
         photo = self.read_photo()
         if photo:
-            result["photo_size"] = len(photo)
-            result["photo_base64"] = base64.b64encode(photo).decode('ascii')
+            result["photo_size_original"] = len(photo)
+            # Convert to JPEG for browser compatibility (JP2 not supported)
+            photo_jpeg = self._convert_image_to_jpeg(photo)
+            result["photo_size"] = len(photo_jpeg)
+            result["photo_base64"] = base64.b64encode(photo_jpeg).decode('ascii')
             result["photo_type"] = "image/jpeg"
         
         # Read text data
@@ -2086,6 +2970,30 @@ class ZairyuCardReader:
         # Read signature
         signature = self.read_signature()
         result.update(signature)
+        
+        # OCR: Extract personal info from front card image
+        # (Name, nationality, DOB, etc. are ONLY in the image, not in text files!)
+        if front_image and EASYOCR_AVAILABLE:
+            logger.info("Running OCR on front card image to extract personal info...")
+            try:
+                # Convert to JPEG first if needed for better OCR results
+                jpeg_for_ocr = self._convert_image_to_jpeg(front_image)
+                ocr_result = self.extract_text_from_image(jpeg_for_ocr)
+                
+                result["ocr_result"] = ocr_result
+                
+                # Copy parsed fields to top level for easy access
+                if ocr_result.get("parsed_fields"):
+                    for key, value in ocr_result["parsed_fields"].items():
+                        # Prefix with 'ocr_' to distinguish from other sources
+                        result[f"ocr_{key}"] = value
+                    
+                    logger.info(f"OCR extracted fields: {list(ocr_result['parsed_fields'].keys())}")
+            except Exception as e:
+                logger.error(f"OCR extraction failed: {e}")
+                result["ocr_error"] = str(e)
+        elif not EASYOCR_AVAILABLE:
+            result["ocr_note"] = "EasyOCR not installed - install with: pip install easyocr"
         
         result["read_complete"] = True
         
@@ -2973,6 +3881,15 @@ class NFCBridge:
             zairyu_reader = ZairyuCardReader(conn)
             
             logger.info(f"API: Reading Zairyu card with number {card_number[:4]}****{card_number[-2:]}")
+            
+            # Log ATR for debugging
+            try:
+                atr = conn.getATR()
+                if atr:
+                    logger.info(f"Card ATR: {toHexString(atr)}")
+            except Exception as e:
+                logger.warning(f"Could not get ATR: {e}")
+            
             result = zairyu_reader.read_all_data(card_number)
             
             conn.disconnect()
@@ -2985,10 +3902,11 @@ class NFCBridge:
                     return {
                         "success": False,
                         "error": "AUTH_FAILED",
-                        "error_ja": "カードとの認証に失敗しました",
-                        "error_en": "Failed to authenticate with card",
-                        "instruction_ja": "カードを置き直して再試行してください",
-                        "instruction_en": "Please reposition the card and try again"
+                        "error_ja": "カードとの相互認証に失敗しました",
+                        "error_en": "Failed mutual authentication with card",
+                        "instruction_ja": "カードが正しく置かれているか確認してください。在留カードでない可能性もあります。",
+                        "instruction_en": "Please ensure the card is properly positioned. This may not be a valid Residence Card.",
+                        "hint": result.get("hint", "Check server logs for details")
                     }
                 elif "Card number verification failed" in error_msg:
                     return {
@@ -3060,6 +3978,291 @@ class NFCBridge:
                 "instruction_ja": "サーバーログを確認してください",
                 "instruction_en": "Check the server logs for details"
             }
+    
+    async def api_test_ocr(self, image_base64: str, filename: str = "uploaded") -> Dict[str, Any]:
+        """
+        API endpoint for testing OCR on an uploaded image.
+        No card needed - just upload an image and run OCR.
+        
+        Args:
+            image_base64: Base64 encoded image data
+            filename: Original filename (for logging)
+        
+        Returns:
+            Dict with OCR results including extracted fields
+        """
+        logger.info(f"API: Testing OCR on uploaded image: {filename}")
+        
+        # Check if EasyOCR is available
+        if not EASYOCR_AVAILABLE:
+            return {
+                "success": False,
+                "error": "OCR_NOT_AVAILABLE",
+                "error_ja": "EasyOCRがインストールされていません",
+                "error_en": "EasyOCR is not installed",
+                "instruction_ja": "pip install easyocr を実行してください",
+                "instruction_en": "Please run: pip install easyocr"
+            }
+        
+        if not image_base64:
+            return {
+                "success": False,
+                "error": "NO_IMAGE",
+                "error_ja": "画像データがありません",
+                "error_en": "No image data provided"
+            }
+        
+        try:
+            # Decode base64 to bytes
+            import base64
+            image_data = base64.b64decode(image_base64)
+            logger.info(f"Decoded image: {len(image_data)} bytes")
+            
+            # Create a temporary ZairyuCardReader to use its OCR methods
+            # (We don't need a real card connection for OCR testing)
+            class OCRTester:
+                def __init__(self):
+                    pass
+                
+                def _get_ocr_reader(self):
+                    global _ocr_reader
+                    if _ocr_reader is None:
+                        logger.info("Initializing EasyOCR reader...")
+                        _ocr_reader = easyocr.Reader(['ja', 'en'], gpu=False)
+                        logger.info("EasyOCR reader initialized")
+                    return _ocr_reader
+            
+            ocr_tester = OCRTester()
+            reader = ocr_tester._get_ocr_reader()
+            
+            if not reader:
+                return {
+                    "success": False,
+                    "error": "OCR_INIT_FAILED",
+                    "error_ja": "OCRリーダーの初期化に失敗しました",
+                    "error_en": "Failed to initialize OCR reader"
+                }
+            
+            # Convert image to numpy array
+            img = Image.open(io.BytesIO(image_data))
+            img_array = np.array(img)
+            logger.info(f"Image size: {img.size}, mode: {img.mode}")
+            
+            # Run OCR
+            logger.info("Running OCR...")
+            ocr_results = reader.readtext(img_array)
+            
+            # Extract all text
+            all_text = []
+            for (bbox, text, confidence) in ocr_results:
+                all_text.append({
+                    "text": text,
+                    "confidence": round(confidence, 3)
+                })
+                logger.info(f"OCR: '{text}' (conf: {confidence:.2f})")
+            
+            # Parse structured fields
+            parsed_fields = self._parse_ocr_for_zairyu(ocr_results)
+            
+            logger.info(f"OCR extracted {len(all_text)} text regions")
+            logger.info(f"Parsed fields: {list(parsed_fields.keys())}")
+            
+            return {
+                "success": True,
+                "filename": filename,
+                "image_size": len(image_data),
+                "ocr_result": {
+                    "ocr_success": True,
+                    "raw_text": all_text,
+                    "parsed_fields": parsed_fields
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"OCR test error: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "success": False,
+                "error": "OCR_ERROR",
+                "error_ja": f"OCRエラー: {str(e)}",
+                "error_en": f"OCR error: {str(e)}"
+            }
+    
+    def _parse_ocr_for_zairyu(self, ocr_results: list) -> Dict[str, str]:
+        """
+        Parse OCR results by grouping text into visual lines.
+        Uses Spatial Analysis - optimized for Zairyu Card layout.
+        Same logic as ZairyuCardReader._parse_ocr_results
+        """
+        parsed = {}
+
+        # ---------------------------------------------------------
+        # 1. HELPER: Group blocks into lines based on Y-coordinate
+        # ---------------------------------------------------------
+        sorted_blocks = sorted(ocr_results, key=lambda x: x[0][0][1])
+        
+        lines = []
+        if sorted_blocks:
+            current_line = [sorted_blocks[0]]
+            current_y = sorted_blocks[0][0][0][1]
+            
+            for block in sorted_blocks[1:]:
+                y = block[0][0][1]
+                if abs(y - current_y) < 20:
+                    current_line.append(block)
+                else:
+                    current_line.sort(key=lambda x: x[0][0][0])
+                    lines.append(current_line)
+                    current_line = [block]
+                    current_y = y
+            
+            current_line.sort(key=lambda x: x[0][0][0])
+            lines.append(current_line)
+
+        text_lines = []
+        for line in lines:
+            line_text = " ".join([b[1] for b in line])
+            text_lines.append(line_text)
+            logger.info(f"OCR Line: {line_text}")
+
+        full_text = " ".join(text_lines)
+
+        # ---------------------------------------------------------
+        # 2. HELPER: Fix Japanese Date Typos
+        # ---------------------------------------------------------
+        def fix_date_typo(date_str):
+            if not date_str:
+                return None
+            if re.match(r'.+\d{1,2}月$', date_str) and date_str.count('月') > 1:
+                return date_str[:-1] + "日"
+            return date_str
+
+        # --- A. Card Number ---
+        card_num_match = re.search(r'([A-Z]{2}\d{8}[A-Z]{2})', full_text.replace(" ", ""))
+        if card_num_match:
+            parsed["card_number"] = card_num_match.group(1)
+
+        # --- B. Name ---
+        for line in text_lines:
+            clean_line = line.strip()
+            check_content = clean_line.replace(" ", "")
+            
+            if parsed.get("card_number") and check_content.upper() == parsed["card_number"]:
+                continue
+            if re.search(r'\d', check_content):
+                continue
+            # Skip Japanese characters
+            if re.search(r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]', check_content):
+                continue
+            
+            check_upper = check_content.upper()
+            if (check_content.isalpha() and 
+                len(check_content) > 3 and 
+                "VALIDITY" not in check_upper and 
+                "PERIOD" not in check_upper and
+                "CARD" not in check_upper and
+                "FERICD" not in check_upper and
+                "STUDENT" not in check_upper and
+                "SRUDENT" not in check_upper):
+                parsed["name"] = clean_line.upper()
+                break
+
+        # --- C. Date of Birth, Gender, Nationality ---
+        dob_pattern = r'(\d{4}\s?年\s?\d{1,2}\s?月\s?\d{1,2}\s?[日月])'
+        
+        for line in text_lines:
+            dob_match = re.search(dob_pattern, line)
+            if dob_match:
+                raw_dob = dob_match.group(1).replace(" ", "")
+                raw_dob = fix_date_typo(raw_dob)
+                if raw_dob:
+                    parsed["date_of_birth"] = raw_dob.replace("年", "-").replace("月", "-").replace("日", "")
+                
+                if '女' in line or 'F.' in line:
+                    parsed["gender"] = "女"
+                elif '男' in line or 'M.' in line:
+                    parsed["gender"] = "男"
+                
+                nationalities = [
+                    'ベトナム', 'ヴェトナム', '中国', '韓国', 'フィリピン',
+                    'インドネシア', 'ネパール', 'ミャンマー', 'タイ', 'スリランカ',
+                ]
+                for nationality in nationalities:
+                    if nationality in line:
+                        parsed["nationality"] = nationality
+                        break
+                break
+
+        # --- D. Period of Stay & Expiration ---
+        # Use STRICT regex to extract actual date inside parens, ignoring garbage
+        period_pattern = r'(\d+\s?年(?:\s?\d+\s?月)?)\s*[（\(].*?(\d{4}\s?年\s?\d{1,2}\s?月\s?\d{1,2}\s?[日月]).*?[）\)]'
+        
+        found_period = False
+        for line in text_lines:
+            match = re.search(period_pattern, line)
+            if match:
+                duration = match.group(1).replace(" ", "")
+                expiry_raw = match.group(2).replace(" ", "")
+                expiry_raw = fix_date_typo(expiry_raw)
+                
+                parsed["period_of_stay"] = f"{duration} ({expiry_raw}まで)"
+                parsed["expiration_date"] = expiry_raw
+                found_period = True
+                break
+        
+        # Fallback if strict regex failed (underlined text in parens is often corrupted)
+        if not found_period:
+            # Just extract duration - don't append corrupted underlined date
+            dur_match = re.search(r'(?<!\d)(\d{1,2}年(?:\d{1,2}月)?)(?!\d)', full_text)
+            if dur_match:
+                parsed["period_of_stay"] = dur_match.group(1)
+        
+        # Try to get expiration from "まで有効" line at bottom (usually readable)
+        if "expiration_date" not in parsed:
+            valid_match = re.search(r'(\d{4}年\d{1,2}月\d{1,2}日)まで有効', full_text)
+            if valid_match:
+                parsed["expiration_date"] = valid_match.group(1)
+
+        # --- E. Status ---
+        known_statuses = [
+            '留学', '技能実習', '技術・人文知識・国際業務', '家族滞在',
+            '永住者', '定住者', '特定技能',
+        ]
+        for line in text_lines:
+            for status in known_statuses:
+                if status in line:
+                    parsed["status_of_residence"] = status
+                    break
+            if "status_of_residence" in parsed:
+                break
+
+        # --- F. Address ---
+        address_pattern = r'(?:東京都|北海道|京都府|大阪府|.{2,3}県).+?(?:市|区|町|村).+'
+        for line in text_lines:
+            if re.search(address_pattern, line) and not re.search(r'\d{4}年', line):
+                parsed["address"] = line.strip()
+                break
+
+        # --- G. Work Restrictions ---
+        if '就労不可' in full_text:
+            parsed["work_permission"] = "就労不可"
+        elif '就労制限なし' in full_text:
+            parsed["work_permission"] = "就労制限なし"
+        elif '指定書' in full_text:
+            parsed["work_permission"] = "指定書により指定"
+
+        # --- H. Valid Until (Fallback) ---
+        if "expiration_date" not in parsed:
+            valid_pattern = r'(\d{4}\s?年\s?\d{1,2}\s?月\s?\d{1,2}\s?[日月])\s*まで'
+            valid_match = re.search(valid_pattern, full_text)
+            if valid_match:
+                exp = valid_match.group(1).replace(" ", "")
+                exp = fix_date_typo(exp)
+                parsed["expiration_date"] = exp
+
+        logger.info(f"Final Parsed Data: {parsed}")
+        return parsed
 
     async def wait_for_card(self, card_type: str, params: Dict, timeout: int = 30) -> Dict[str, Any]:
         """Wait for card and read it"""
@@ -3206,6 +4409,17 @@ class NFCBridge:
                 result = await self.api_read_zairyu(data.get("card_number", ""))
                 await websocket.send(json.dumps({
                     "type": "zairyu_result",
+                    **result
+                }))
+            
+            elif msg_type == "test_ocr":
+                # Test OCR on an uploaded image (no card needed)
+                result = await self.api_test_ocr(
+                    data.get("image_base64", ""),
+                    data.get("filename", "uploaded_image")
+                )
+                await websocket.send(json.dumps({
+                    "type": "ocr_result",
                     **result
                 }))
             
