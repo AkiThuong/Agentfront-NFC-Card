@@ -8,6 +8,15 @@ echo.
 echo Current directory: %CD%
 echo.
 
+:: Kill any running NFC processes that might lock files
+echo Stopping any running NFC processes...
+taskkill /F /IM nfc_server.exe 2>nul && echo   Stopped: nfc_server.exe
+taskkill /F /IM nfc_service.exe 2>nul && echo   Stopped: nfc_service.exe
+taskkill /F /IM nfc_launcher.exe 2>nul && echo   Stopped: nfc_launcher.exe
+taskkill /F /IM check_system.exe 2>nul && echo   Stopped: check_system.exe
+timeout /t 1 /nobreak >nul
+echo.
+
 :: Required Python version
 set REQUIRED_MAJOR=3
 set REQUIRED_MINOR=13

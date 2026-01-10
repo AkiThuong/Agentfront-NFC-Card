@@ -4,15 +4,17 @@ NFC Bridge Build Script
 Builds the NFC Bridge Server as Windows executables using PyInstaller.
 
 Creates:
-- nfc_server.exe  - Main server executable (run in background)
+- nfc_server.exe   - Main server executable (run in background)
 - nfc_launcher.exe - Launcher that opens status page in browser
-- nfc_service.exe - Windows service wrapper
+- nfc_service.exe  - Windows service wrapper
 
 Usage:
-    python build.py          # Build all
+    python build.py          # Build main components (server, launcher, service)
     python build.py server   # Build server only
     python build.py launcher # Build launcher only
     python build.py service  # Build service only
+    python build.py checker  # Build check_system.exe (optional diagnostic tool)
+    python build.py clean    # Clean build artifacts only
 """
 
 import sys
@@ -38,19 +40,85 @@ def check_pyinstaller():
         return False
 
 
+def kill_running_processes():
+    """Kill any running NFC server processes that might lock files"""
+    processes_to_kill = ['nfc_server.exe', 'nfc_service.exe', 'nfc_launcher.exe', 'check_system.exe']
+    
+    for proc_name in processes_to_kill:
+        try:
+            # Use taskkill to terminate processes
+            result = subprocess.run(
+                ['taskkill', '/F', '/IM', proc_name],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                print(f"  Stopped: {proc_name}")
+        except Exception:
+            pass  # Process not running, ignore
+
+
+def rmtree_with_retry(path, max_retries=3, delay=2):
+    """Remove directory tree with retry logic for locked files"""
+    import time
+    
+    for attempt in range(max_retries):
+        try:
+            if path.exists():
+                shutil.rmtree(path)
+            return True
+        except PermissionError as e:
+            if attempt < max_retries - 1:
+                print(f"  [Retry {attempt + 1}/{max_retries}] Files locked, waiting {delay}s...")
+                time.sleep(delay)
+            else:
+                print(f"  [ERROR] Cannot delete {path}: {e}")
+                print(f"  Please close any programs using files in this folder.")
+                return False
+        except Exception as e:
+            print(f"  [ERROR] {e}")
+            return False
+    return True
+
+
 def clean_build():
     """Clean previous build artifacts"""
     print("Cleaning previous build...")
     
+    # First, try to kill any running processes that might lock files
+    print("Stopping any running NFC processes...")
+    kill_running_processes()
+    
+    # Small delay to let processes fully terminate
+    import time
+    time.sleep(1)
+    
+    success = True
     for path in [DIST_DIR, BUILD_DIR]:
         if path.exists():
-            shutil.rmtree(path)
+            print(f"  Removing: {path}")
+            if not rmtree_with_retry(path):
+                success = False
     
     # Clean .spec files
     for spec in SCRIPT_DIR.glob("*.spec"):
-        spec.unlink()
+        try:
+            spec.unlink()
+            print(f"  Removed: {spec.name}")
+        except PermissionError:
+            print(f"  [WARNING] Could not delete {spec.name}")
     
-    print("Clean complete")
+    if success:
+        print("Clean complete")
+    else:
+        print("\n[WARNING] Some files could not be deleted.")
+        print("Try one of these solutions:")
+        print("  1. Close Windows Explorer if the dist/ folder is open")
+        print("  2. Stop any running nfc_server.exe manually")
+        print("  3. Temporarily disable antivirus")
+        print("  4. Run this script as Administrator")
+        print("\nPress Enter to continue anyway, or Ctrl+C to cancel...")
+        input()
 
 
 def get_hidden_imports():
@@ -499,8 +567,13 @@ def main():
     if build_all or 'all' in build_items or 'service' in build_items:
         success = build_service() and success
     
-    if build_all or 'all' in build_items or 'checker' in build_items:
+    # Checker is optional - only build if explicitly requested
+    # (It can cause file locking issues if left running)
+    if 'checker' in build_items:
         success = build_checker() and success
+    elif build_all or 'all' in build_items:
+        print("\n[INFO] Skipping check_system.exe (optional)")
+        print("       To build it: python build.py checker")
     
     # Copy additional files
     if DIST_DIR.exists():

@@ -202,7 +202,22 @@ def main():
     
     print("=" * 60)
     
-    input("\nPress Enter to exit...")
+    # Check if running in automated mode (e.g., --no-wait flag)
+    if '--no-wait' in sys.argv:
+        return 0 if critical_ok else 1
+    
+    # Auto-close after 30 seconds to prevent locking files
+    print("\nClosing in 30 seconds (press any key to exit now)...")
+    
+    import msvcrt
+    import time
+    
+    for i in range(300):  # 30 seconds in 0.1s increments
+        if msvcrt.kbhit():
+            msvcrt.getch()
+            break
+        time.sleep(0.1)
+    
     return 0 if critical_ok else 1
 
 if __name__ == "__main__":
