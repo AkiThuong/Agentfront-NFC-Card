@@ -56,30 +56,74 @@ def clean_build():
 def get_hidden_imports():
     """Get list of hidden imports needed"""
     return [
+        # Core
         'websockets',
         'websockets.legacy',
         'websockets.legacy.server',
+        'websockets.server',
+        'websockets.exceptions',
         'asyncio',
         'json',
         'logging',
         'hashlib',
+        
+        # Smart card (pyscard)
         'smartcard',
         'smartcard.System',
         'smartcard.util',
         'smartcard.Exceptions',
         'smartcard.scard',
+        'smartcard.CardConnection',
+        'smartcard.CardRequest',
+        'smartcard.CardType',
+        
+        # Cryptography (pycryptodome)
         'Crypto',
         'Crypto.Cipher',
         'Crypto.Cipher.DES3',
         'Crypto.Cipher.DES',
+        'Crypto.Cipher.AES',
         'Crypto.Hash',
         'Crypto.Hash.SHA1',
+        'Crypto.Hash.SHA256',
+        'Crypto.Util',
+        'Crypto.Util.Padding',
+        # Also try Cryptodome namespace
+        'Cryptodome',
+        'Cryptodome.Cipher',
+        'Cryptodome.Cipher.DES3',
+        'Cryptodome.Cipher.DES',
+        
+        # Image processing (Pillow)
+        'PIL',
+        'PIL.Image',
+        'PIL.ImageFile',
+        'PIL.JpegImagePlugin',
+        'PIL.Jpeg2KImagePlugin',
+        'PIL.PngImagePlugin',
+        
+        # NumPy
+        'numpy',
+        'numpy.core',
+        'numpy.core._multiarray_umath',
+        
+        # EasyOCR and dependencies (large - consider excluding if not needed)
+        'easyocr',
+        'easyocr.easyocr',
+        
+        # nfcpy
+        'nfc',
+        'nfc.tag',
+        'nfc.clf',
+        
+        # Windows service
         'win32serviceutil',
         'win32service',
         'win32event',
         'servicemanager',
         'win32api',
         'win32con',
+        'pywintypes',
     ]
 
 
@@ -100,6 +144,17 @@ def get_data_files():
     return files
 
 
+def get_collect_packages():
+    """Get packages that need all submodules collected"""
+    return [
+        'smartcard',
+        'Crypto',
+        'Cryptodome',
+        'PIL',
+        'websockets',
+    ]
+
+
 def build_server():
     """Build the main server executable"""
     print("\n" + "=" * 60)
@@ -110,6 +165,11 @@ def build_server():
     hidden_import_args = []
     for imp in hidden_imports:
         hidden_import_args.extend(['--hidden-import', imp])
+    
+    # Collect all submodules for complex packages
+    collect_args = []
+    for pkg in get_collect_packages():
+        collect_args.extend(['--collect-all', pkg])
     
     data_files = get_data_files()
     data_args = []
@@ -123,7 +183,9 @@ def build_server():
         '--icon', 'NONE',  # Add icon if you have one
         '--console',  # Show console for debugging, use --noconsole for production
         '--noupx',
+        '--noconfirm',  # Don't ask to overwrite
         *hidden_import_args,
+        *collect_args,
         *data_args,
         str(SCRIPT_DIR / 'server.py')
     ]
@@ -184,6 +246,11 @@ def build_service():
     for imp in hidden_imports:
         hidden_import_args.extend(['--hidden-import', imp])
     
+    # Collect all submodules for complex packages
+    collect_args = []
+    for pkg in get_collect_packages():
+        collect_args.extend(['--collect-all', pkg])
+    
     data_files = get_data_files()
     data_args = []
     for src, dst in data_files:
@@ -196,7 +263,9 @@ def build_service():
         '--icon', 'NONE',
         '--console',
         '--noupx',
+        '--noconfirm',
         *hidden_import_args,
+        *collect_args,
         *data_args,
         str(SCRIPT_DIR / 'nfc_service.py')
     ]

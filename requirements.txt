@@ -1,33 +1,37 @@
 # NFC Bridge Server Dependencies
 # ================================
+#
+# PYTHON VERSION: 3.13 required
+# The build script will auto-install Python 3.13 if not found
+#
 
 # WebSocket server
-websockets>=12.0
+websockets>=12.0,<14.0
 
 # Smart card / NFC reader support
 # Note: pyscard requires swig to be installed on Windows
 # If pip install fails, install via: pip install pyscard --only-binary :all:
 # Or download wheel from: https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyscard
-pyscard>=2.0.0
+pyscard>=2.0.0,<3.0.0
 
 # Cryptography for BAC authentication (CCCD/ePassport)
-pycryptodome>=3.19.0
+pycryptodome>=3.19.0,<4.0.0
 
 # Image processing for JP2 to JPEG conversion
 # Zairyu cards store images in JPEG 2000 format which browsers don't support
-Pillow>=10.0.0
-numpy>=1.24.0
+Pillow>=10.0.0,<12.0.0
+numpy>=1.24.0,<3.0.0
 
 # OCR for extracting text from Zairyu card images
 # Personal info (name, nationality, etc.) is ONLY in images, not text files
 # First run will download ~100MB of language models
-easyocr>=1.7.0
+easyocr>=1.7.0,<2.0.0
 
 # Windows service support
 pywin32>=306; sys_platform == 'win32'
 
 # Build tools (for creating executables)
-pyinstaller>=6.0.0
+pyinstaller>=6.0.0,<7.0.0
 
 # Optional: nfcpy for direct FeliCa access (Suica full read)
 # Requires libusb - install Zadig driver for your reader

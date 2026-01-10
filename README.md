@@ -228,6 +228,26 @@ PC/SC compatible readers:
 
 To create standalone `.exe` files that can run on any Windows machine:
 
+### ⚠️ Python Version Requirements
+
+**Required:** Python **3.13** (auto-installed if missing)
+
+| Python Version | Status |
+|----------------|--------|
+| 3.13 | ✅ Required |
+| 3.14 | ❌ Too new - native extensions may fail |
+| 3.12 and below | ❌ Not supported |
+
+The build script will automatically install Python 3.13 if not found.
+
+```powershell
+# Check your Python version
+python --version
+
+# Manual install if needed:
+winget install Python.Python.3.13
+```
+
 ### Automatic Build
 
 ```powershell
@@ -263,6 +283,45 @@ The `dist/` folder will contain:
 | `install.bat` | Install as Windows service |
 | `uninstall.bat` | Remove Windows service |
 | `start.bat` | Run without service |
+
+### Troubleshooting Build Failures
+
+#### Error: "ModuleNotFoundError" during build
+
+```powershell
+# Reinstall dependencies with binary wheels only
+pip install --only-binary :all: pyscard pycryptodome Pillow numpy
+```
+
+#### Error: Python 3.13 not installing automatically
+
+If the auto-install fails, install manually:
+
+```powershell
+# Option 1: Using winget (Windows 10/11)
+winget install Python.Python.3.13
+
+# Option 2: Download from python.org
+# https://www.python.org/downloads/release/python-3131/
+# IMPORTANT: Check "Add Python to PATH" during installation!
+
+# After installing, restart your terminal and run build_exe.bat again
+```
+
+#### Error: "Failed to execute script" on target PC
+
+The target PC may be missing Visual C++ Redistributable:
+
+1. Download from [Microsoft](https://aka.ms/vs/17/release/vc_redist.x64.exe)
+2. Install on target PC
+3. Retry running the executable
+
+#### Error: Antivirus blocks the executable
+
+Some antivirus software flags PyInstaller executables as false positives:
+
+1. Add an exclusion for the `dist/` folder
+2. Or whitelist `nfc_server.exe` and `nfc_service.exe`
 
 ---
 
