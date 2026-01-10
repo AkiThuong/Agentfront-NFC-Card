@@ -76,6 +76,23 @@ if %NEED_RESTART% equ 1 (
 :python_ready
 echo.
 
+:: Check and install Visual C++ Redistributable (required for PyTorch)
+reg query "HKLM\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64" >nul 2>&1
+if %errorLevel% neq 0 (
+    echo Installing Visual C++ Redistributable...
+    set VCREDIST=%TEMP%\vc_redist.x64.exe
+    curl -L -o "!VCREDIST!" "https://aka.ms/vs/17/release/vc_redist.x64.exe" 2>nul
+    if not exist "!VCREDIST!" (
+        powershell -Command "Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile '!VCREDIST!'" 2>nul
+    )
+    if exist "!VCREDIST!" (
+        "!VCREDIST!" /install /passive /norestart
+        del "!VCREDIST!" 2>nul
+        echo VC++ Redistributable installed!
+    )
+    echo.
+)
+
 :: Remove old venv if wrong Python version
 if exist "venv\pyvenv.cfg" (
     findstr /c:"3.13" "venv\pyvenv.cfg" >nul 2>&1
