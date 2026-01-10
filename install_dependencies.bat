@@ -162,33 +162,32 @@ if %errorLevel% neq 0 (
     echo       OK
 )
 
-:: Ask about OCR
+:: Force install EasyOCR
 echo.
 echo ========================================
-echo   Optional: EasyOCR (Text Extraction)
+echo   Installing EasyOCR (Text Extraction)
 echo ========================================
 echo.
-echo EasyOCR extracts text from card images (name, nationality, etc.)
-echo Requires ~2GB download (PyTorch + models)
+echo Installing PyTorch + EasyOCR (~2GB download)...
+echo This may take several minutes...
 echo.
-set /p INSTALL_OCR="Install EasyOCR? (y/n): "
 
-if /i "%INSTALL_OCR%"=="y" (
+pip install --only-binary :all: torch torchvision --quiet 2>nul
+if %errorLevel% neq 0 (
+    echo [INFO] Binary install failed, trying regular install...
+    pip install torch torchvision --quiet
+)
+
+pip install easyocr --quiet
+if %errorLevel% equ 0 (
     echo.
-    echo Installing EasyOCR + PyTorch (this takes several minutes)...
-    pip install --only-binary :all: torch torchvision --quiet 2>nul
-    pip install easyocr --quiet
-    
-    if %errorLevel% equ 0 (
-        echo.
-        echo Downloading OCR language models...
-        python -c "import easyocr; easyocr.Reader(['ja', 'en'], gpu=False, verbose=False); print('OK')"
-        echo EasyOCR installed!
-    ) else (
-        echo [WARNING] EasyOCR installation failed
-    )
+    echo Downloading OCR language models (Japanese + English)...
+    python -c "import easyocr; easyocr.Reader(['ja', 'en'], gpu=False, verbose=False); print('Models loaded!')"
+    echo.
+    echo EasyOCR installed successfully!
 ) else (
-    echo Skipping EasyOCR.
+    echo [WARNING] EasyOCR installation failed
+    echo You can try again later with: install_ocr.bat
 )
 
 echo.
