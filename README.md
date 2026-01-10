@@ -270,6 +270,20 @@ python build.py
 # 4. Find executables in dist/ folder
 ```
 
+### Build Options
+
+| Command | OCR Support | Exe Size | Build Time |
+|---------|-------------|----------|------------|
+| `python build.py` | ✅ Yes | ~500MB-2GB | ~10-20 min |
+| `python build.py --no-ocr` | ❌ No | ~50MB | ~2-5 min |
+
+**With OCR:** Includes EasyOCR + PyTorch for extracting text from card images (names, nationality, etc.)
+
+**Without OCR:** Smaller exe, faster build, but no text extraction from images.
+
+**Skipped by default:**
+- `check_system.exe` - Optional diagnostic tool (run `python build.py checker` to include)
+
 ### Build Output
 
 The `dist/` folder will contain:

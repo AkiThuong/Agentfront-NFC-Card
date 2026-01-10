@@ -9,12 +9,13 @@ Creates:
 - nfc_service.exe  - Windows service wrapper
 
 Usage:
-    python build.py          # Build main components (server, launcher, service)
-    python build.py server   # Build server only
-    python build.py launcher # Build launcher only
-    python build.py service  # Build service only
-    python build.py checker  # Build check_system.exe (optional diagnostic tool)
-    python build.py clean    # Clean build artifacts only
+    python build.py              # Build with OCR (includes EasyOCR+PyTorch, ~500MB-2GB exe)
+    python build.py --no-ocr     # Build without OCR (fast, ~50MB exe)
+    python build.py server       # Build server only (with OCR)
+    python build.py launcher     # Build launcher only
+    python build.py service      # Build service only
+    python build.py checker      # Build check_system.exe (optional diagnostic tool)
+    python build.py clean        # Clean build artifacts only
 """
 
 import sys
@@ -175,9 +176,16 @@ def get_hidden_imports():
         'numpy.core',
         'numpy.core._multiarray_umath',
         
-        # EasyOCR and dependencies (large - consider excluding if not needed)
+        # EasyOCR and PyTorch
         'easyocr',
         'easyocr.easyocr',
+        'easyocr.utils',
+        'easyocr.model',
+        'torch',
+        'torch.nn',
+        'torch.cuda',
+        'torchvision',
+        'torchvision.models',
         
         # nfcpy
         'nfc',
@@ -223,10 +231,46 @@ def get_collect_packages():
     ]
 
 
-def build_server():
-    """Build the main server executable"""
+def get_excluded_packages():
+    """Packages to exclude from the build (too large or problematic)"""
+    return [
+        # These are definitely not needed
+        'tensorflow',
+        'keras',
+        'cv2',
+        'opencv',
+        'matplotlib',
+        'IPython',
+        'jupyter',
+    ]
+
+
+def get_torch_binaries():
+    """Get PyTorch binary collection args for proper DLL bundling"""
+    return [
+        '--collect-binaries', 'torch',
+        '--collect-data', 'torch', 
+        '--collect-binaries', 'torchvision',
+        '--copy-metadata', 'torch',
+        '--copy-metadata', 'torchvision',
+        '--copy-metadata', 'easyocr',
+    ]
+
+
+def build_server(include_ocr=True):
+    """Build the main server executable
+    
+    Args:
+        include_ocr: If True, includes EasyOCR+PyTorch (~2GB exe). 
+                     If False, builds without OCR (~50MB exe).
+    """
     print("\n" + "=" * 60)
     print("Building NFC Server...")
+    if include_ocr:
+        print("Including EasyOCR + PyTorch (this will take a while...)")
+        print("Expected exe size: ~500MB - 2GB")
+    else:
+        print("Without OCR (fast build, ~50MB exe)")
     print("=" * 60)
     
     hidden_imports = get_hidden_imports()
@@ -238,6 +282,21 @@ def build_server():
     collect_args = []
     for pkg in get_collect_packages():
         collect_args.extend(['--collect-all', pkg])
+    
+    # PyTorch binaries for OCR support
+    torch_args = []
+    if include_ocr:
+        torch_args = get_torch_binaries()
+    
+    # Exclude large/problematic packages
+    exclude_args = []
+    for pkg in get_excluded_packages():
+        exclude_args.extend(['--exclude-module', pkg])
+    
+    # If not including OCR, also exclude torch
+    if not include_ocr:
+        for pkg in ['torch', 'torchvision', 'torchaudio', 'easyocr']:
+            exclude_args.extend(['--exclude-module', pkg])
     
     data_files = get_data_files()
     data_args = []
@@ -254,11 +313,13 @@ def build_server():
         '--noconfirm',  # Don't ask to overwrite
         *hidden_import_args,
         *collect_args,
+        *torch_args,
+        *exclude_args,
         *data_args,
         str(SCRIPT_DIR / 'server.py')
     ]
     
-    print(f"Running: {' '.join(cmd[:10])}...")
+    print(f"Running PyInstaller...")
     result = subprocess.run(cmd, cwd=str(SCRIPT_DIR))
     
     if result.returncode == 0:
@@ -319,6 +380,11 @@ def build_service():
     for pkg in get_collect_packages():
         collect_args.extend(['--collect-all', pkg])
     
+    # Exclude large/problematic packages
+    exclude_args = []
+    for pkg in get_excluded_packages():
+        exclude_args.extend(['--exclude-module', pkg])
+    
     data_files = get_data_files()
     data_args = []
     for src, dst in data_files:
@@ -334,6 +400,7 @@ def build_service():
         '--noconfirm',
         *hidden_import_args,
         *collect_args,
+        *exclude_args,
         *data_args,
         str(SCRIPT_DIR / 'nfc_service.py')
     ]
@@ -543,8 +610,20 @@ def main():
         return 1
     
     # Parse arguments
-    build_all = len(sys.argv) == 1
     build_items = sys.argv[1:] if len(sys.argv) > 1 else ['all']
+    build_all = len(sys.argv) == 1 or 'all' in build_items
+    
+    # Check for --no-ocr flag
+    include_ocr = '--no-ocr' not in build_items
+    build_items = [item for item in build_items if item != '--no-ocr']
+    
+    if include_ocr:
+        print("\n[OCR] Building WITH EasyOCR + PyTorch")
+        print("      This will create a large exe (~500MB - 2GB)")
+        print("      Use 'python build.py --no-ocr' for smaller exe without OCR\n")
+    else:
+        print("\n[OCR] Building WITHOUT OCR (--no-ocr flag)")
+        print("      Smaller exe (~50MB), no text extraction from images\n")
     
     if 'clean' in build_items:
         clean_build()
@@ -552,26 +631,26 @@ def main():
             return 0
     
     # Clean on full build
-    if build_all or 'all' in build_items:
+    if build_all:
         clean_build()
     
     success = True
     
     # Build requested components
-    if build_all or 'all' in build_items or 'server' in build_items:
-        success = build_server() and success
+    if build_all or 'server' in build_items:
+        success = build_server(include_ocr=include_ocr) and success
     
-    if build_all or 'all' in build_items or 'launcher' in build_items:
+    if build_all or 'launcher' in build_items:
         success = build_launcher() and success
     
-    if build_all or 'all' in build_items or 'service' in build_items:
+    if build_all or 'service' in build_items:
         success = build_service() and success
     
     # Checker is optional - only build if explicitly requested
     # (It can cause file locking issues if left running)
     if 'checker' in build_items:
         success = build_checker() and success
-    elif build_all or 'all' in build_items:
+    elif build_all:
         print("\n[INFO] Skipping check_system.exe (optional)")
         print("       To build it: python build.py checker")
     
