@@ -11,9 +11,43 @@ Supports:
 
 ---
 
-## 🚀 Quick Start - Executable Version
+## 🚀 Quick Start - Run with Python (Recommended)
 
-### Download & Run (No Python Required!)
+### First Time Setup
+
+1. Double-click `install_dependencies.bat`
+2. It will install Python (if needed) and all dependencies
+3. Choose whether to install EasyOCR for text extraction
+
+### Run the Server Manually
+
+```
+Double-click: start_server.bat
+```
+
+The server runs on `ws://localhost:3005`
+
+### Run as Windows Service (Auto-start on Boot)
+
+```
+Right-click: install_service.bat → Run as Administrator
+```
+
+| Script | Description |
+|--------|-------------|
+| `install_service.bat` | Install & start service (run as Admin) |
+| `uninstall_service.bat` | Stop & remove service (run as Admin) |
+
+After installing, the server will:
+- ✅ Start automatically when Windows boots
+- ✅ Run in background (no console window)
+- ✅ Restart automatically if it crashes
+
+---
+
+## 📦 Alternative: Executable Version (No Python Required)
+
+### Download & Run
 
 1. Download the pre-built executables from the `dist` folder
 2. Double-click `start.bat` or `nfc_launcher.exe`
