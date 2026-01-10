@@ -62,7 +62,6 @@ if %NEED_RESTART% equ 1 (
     echo ========================================
     echo.
     echo Please close this window and run start_server.bat again.
-    echo ^(PATH needs to refresh^)
     echo.
     pause
     exit /b 0
@@ -94,24 +93,87 @@ if not exist "venv\Scripts\activate.bat" (
 :: Activate venv
 call "venv\Scripts\activate.bat"
 
-:: Check if requirements are installed
+:: Check if core dependencies are installed
 python -c "import websockets" >nul 2>&1
 if %errorLevel% neq 0 (
-    echo Installing dependencies...
+    echo.
+    echo ========================================
+    echo   Installing Dependencies
+    echo ========================================
     echo.
     
     python -m pip install --upgrade pip --quiet
     
-    :: Install with binary-only
-    pip install --only-binary :all: websockets pycryptodome Pillow numpy pywin32 --quiet
+    echo [1/6] websockets...
+    pip install --only-binary :all: websockets --quiet && echo       OK
     
-    :: pyscard
+    echo [2/6] pycryptodome...
+    pip install --only-binary :all: pycryptodome --quiet && echo       OK
+    
+    echo [3/6] Pillow...
+    pip install --only-binary :all: Pillow --quiet && echo       OK
+    
+    echo [4/6] numpy...
+    pip install --only-binary :all: numpy --quiet && echo       OK
+    
+    echo [5/6] pywin32...
+    pip install --only-binary :all: pywin32 --quiet && echo       OK
+    python -m pywin32_postinstall -install >nul 2>&1
+    
+    echo [6/6] pyscard...
+    pip install --only-binary :all: pyscard --quiet 2>nul
+    if %errorLevel% neq 0 (
+        pip install pyscard --quiet 2>nul
+        if %errorLevel% neq 0 (
+            echo       FAILED - NFC may not work
+        ) else (
+            echo       OK
+        )
+    ) else (
+        echo       OK
+    )
+    echo.
+)
+
+:: Check and install pyscard if missing
+python -c "import smartcard" >nul 2>&1
+if %errorLevel% neq 0 (
+    echo Installing pyscard...
     pip install --only-binary :all: pyscard --quiet 2>nul
     if %errorLevel% neq 0 (
         pip install pyscard --quiet 2>nul
     )
+)
+
+:: Check and install EasyOCR if missing
+python -c "import easyocr" >nul 2>&1
+if %errorLevel% neq 0 (
+    echo.
+    echo ========================================
+    echo   Installing EasyOCR + PyTorch
+    echo ========================================
+    echo.
+    echo This will download ~2GB. Please wait...
+    echo.
     
-    echo Dependencies installed!
+    echo Installing PyTorch...
+    pip install --only-binary :all: torch torchvision --quiet 2>nul
+    if %errorLevel% neq 0 (
+        pip install torch torchvision --quiet
+    )
+    
+    echo Installing EasyOCR...
+    pip install easyocr --quiet
+    
+    if %errorLevel% equ 0 (
+        echo.
+        echo Downloading OCR models (Japanese + English)...
+        python -c "import easyocr; easyocr.Reader(['ja', 'en'], gpu=False, verbose=False); print('Models loaded!')"
+        echo.
+        echo EasyOCR installed!
+    ) else (
+        echo [WARNING] EasyOCR installation failed
+    )
     echo.
 )
 

@@ -36,7 +36,6 @@ if %errorLevel% equ 0 (
 echo [INFO] Python 3.13 not found. Installing...
 echo.
 
-:: Try winget first
 winget --version >nul 2>&1
 if %errorLevel% equ 0 (
     echo Installing Python 3.13 via winget...
@@ -47,7 +46,6 @@ if %errorLevel% equ 0 (
     )
 )
 
-:: winget failed, download directly
 echo Downloading Python 3.13...
 set INSTALLER=%TEMP%\python-3.13-installer.exe
 curl -L -o "%INSTALLER%" "https://www.python.org/ftp/python/3.13.1/python-3.13.1-amd64.exe" 2>nul
@@ -64,20 +62,13 @@ if exist "%INSTALLER%" (
 )
 
 echo [ERROR] Failed to install Python 3.13
-echo Please install manually from: https://www.python.org/downloads/release/python-3131/
 pause
 exit /b 1
 
 :check_restart
 if %NEED_RESTART% equ 1 (
     echo.
-    echo ========================================
-    echo   Python 3.13 Installed!
-    echo ========================================
-    echo.
-    echo Please close this window and run install_service.bat again.
-    echo ^(PATH needs to refresh^)
-    echo.
+    echo Python 3.13 Installed! Please restart this script.
     pause
     exit /b 0
 )
@@ -96,48 +87,62 @@ if exist "venv\pyvenv.cfg" (
 
 :: Create venv if not exists
 if not exist "venv\Scripts\activate.bat" (
-    echo Creating virtual environment with Python 3.13...
+    echo Creating virtual environment...
     %PYTHON_CMD% -m venv venv
-    if %errorLevel% neq 0 (
-        echo [ERROR] Failed to create virtual environment
-        pause
-        exit /b 1
-    )
 )
 
 :: Activate venv
 call "venv\Scripts\activate.bat"
 
-:: Check if pywin32 is installed
-python -c "import win32serviceutil" >nul 2>&1
+:: Install all dependencies if missing
+python -c "import websockets" >nul 2>&1
 if %errorLevel% neq 0 (
+    echo.
     echo Installing dependencies...
     python -m pip install --upgrade pip --quiet
     
-    :: Install with binary-only
     pip install --only-binary :all: websockets pycryptodome Pillow numpy pywin32 --quiet
-    
-    :: pywin32 post-install
     python -m pywin32_postinstall -install >nul 2>&1
     
-    :: pyscard
     pip install --only-binary :all: pyscard --quiet 2>nul
-    if %errorLevel% neq 0 (
-        pip install pyscard --quiet 2>nul
-    )
+    if %errorLevel% neq 0 ( pip install pyscard --quiet 2>nul )
     
     echo Dependencies installed!
-    echo.
 )
 
-:: Stop existing service if running
-echo Stopping existing service (if any)...
+:: Install pyscard if missing
+python -c "import smartcard" >nul 2>&1
+if %errorLevel% neq 0 (
+    echo Installing pyscard...
+    pip install --only-binary :all: pyscard --quiet 2>nul
+    if %errorLevel% neq 0 ( pip install pyscard --quiet 2>nul )
+)
+
+:: Install EasyOCR if missing
+python -c "import easyocr" >nul 2>&1
+if %errorLevel% neq 0 (
+    echo.
+    echo Installing EasyOCR + PyTorch (~2GB)...
+    pip install --only-binary :all: torch torchvision --quiet 2>nul
+    if %errorLevel% neq 0 ( pip install torch torchvision --quiet )
+    pip install easyocr --quiet
+    
+    if %errorLevel% equ 0 (
+        echo Downloading OCR models...
+        python -c "import easyocr; easyocr.Reader(['ja', 'en'], gpu=False, verbose=False)"
+        echo EasyOCR installed!
+    )
+)
+
+:: Stop existing service
+echo.
+echo Stopping existing service...
 net stop NFCBridgeService >nul 2>&1
 python nfc_service.py stop >nul 2>&1
 timeout /t 2 /nobreak >nul
 
 :: Remove existing service
-echo Removing existing service (if any)...
+echo Removing existing service...
 python nfc_service.py remove >nul 2>&1
 sc delete NFCBridgeService >nul 2>&1
 timeout /t 2 /nobreak >nul
@@ -147,30 +152,20 @@ echo.
 echo Installing NFC Bridge Service...
 python nfc_service.py install
 if %errorLevel% neq 0 (
-    echo.
     echo [ERROR] Failed to install service
     pause
     exit /b 1
 )
 
-:: Configure service to start automatically
-echo.
-echo Configuring auto-start on boot...
+:: Configure auto-start
+echo Configuring auto-start...
 sc config NFCBridgeService start= auto >nul 2>&1
 
 :: Start the service
-echo.
 echo Starting service...
 python nfc_service.py start
-if %errorLevel% neq 0 (
-    echo.
-    echo [WARNING] Service installed but failed to start
-    echo Try: net start NFCBridgeService
-)
 
-:: Verify service is running
-echo.
-echo Checking service status...
+:: Verify
 timeout /t 2 /nobreak >nul
 sc query NFCBridgeService | findstr "RUNNING" >nul 2>&1
 if %errorLevel% equ 0 (
@@ -179,18 +174,16 @@ if %errorLevel% equ 0 (
     echo   SUCCESS!
     echo ========================================
     echo.
-    echo NFC Bridge Service is now:
+    echo NFC Bridge Service is:
     echo   - Installed
-    echo   - Running
-    echo   - Set to auto-start on boot
+    echo   - Running  
+    echo   - Auto-start on boot
     echo.
-    echo Service name: NFCBridgeService
     echo Port: 3005
     echo.
 ) else (
     echo.
-    echo [INFO] Service installed.
-    echo Check status with: sc query NFCBridgeService
+    echo Service installed. Check: sc query NFCBridgeService
 )
 
 pause
