@@ -104,18 +104,7 @@ if %errorLevel% neq 0 (
     pip install --only-binary :all: websockets pycryptodome Pillow numpy pywin32 --quiet
     python -m pywin32_postinstall -install >nul 2>&1
     
-    pip install --only-binary :all: pyscard --quiet 2>nul
-    if %errorLevel% neq 0 ( pip install pyscard --quiet 2>nul )
-    
     echo Dependencies installed!
-)
-
-:: Install pyscard if missing
-python -c "import smartcard" >nul 2>&1
-if %errorLevel% neq 0 (
-    echo Installing pyscard...
-    pip install --only-binary :all: pyscard --quiet 2>nul
-    if %errorLevel% neq 0 ( pip install pyscard --quiet 2>nul )
 )
 
 :: Install EasyOCR if missing

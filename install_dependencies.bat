@@ -142,26 +142,6 @@ if %errorLevel% equ 0 (
     echo       FAILED ^(service mode may not work^)
 )
 
-:: pyscard - try binary first
-echo.
-echo Installing pyscard (NFC reader support)...
-pip install --only-binary :all: pyscard --quiet 2>nul
-if %errorLevel% neq 0 (
-    echo [INFO] No binary wheel, trying source build...
-    pip install pyscard --quiet 2>nul
-    if %errorLevel% neq 0 (
-        echo.
-        echo [WARNING] pyscard failed - NFC reader may not work.
-        echo To fix, install Visual C++ Build Tools:
-        echo   https://visualstudio.microsoft.com/visual-cpp-build-tools/
-        echo.
-    ) else (
-        echo       OK (built from source)
-    )
-) else (
-    echo       OK
-)
-
 :: Force install EasyOCR
 echo.
 echo ========================================

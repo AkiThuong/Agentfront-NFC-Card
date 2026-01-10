@@ -140,39 +140,23 @@ if %errorLevel% neq 0 (
     
     python -m pip install --upgrade pip --quiet
     
-    echo [1/6] websockets...
+    echo [1/5] websockets...
     pip install --only-binary :all: websockets --quiet && echo       OK
     
-    echo [2/6] pycryptodome...
+    echo [2/5] pycryptodome...
     pip install --only-binary :all: pycryptodome --quiet && echo       OK
     
-    echo [3/6] Pillow...
+    echo [3/5] Pillow...
     pip install --only-binary :all: Pillow --quiet && echo       OK
     
-    echo [4/6] numpy...
+    echo [4/5] numpy...
     pip install --only-binary :all: numpy --quiet && echo       OK
     
-    echo [5/6] pywin32...
+    echo [5/5] pywin32...
     pip install --only-binary :all: pywin32 --quiet && echo       OK
     python -m pywin32_postinstall -install >nul 2>&1
     
-    echo [6/6] pyscard...
-    pip install --only-binary :all: pyscard --quiet 2>nul
-    if %errorLevel% neq 0 (
-        pip install pyscard --quiet 2>nul
-        if %errorLevel% neq 0 ( echo       FAILED ) else ( echo       OK )
-    ) else (
-        echo       OK
-    )
     echo.
-)
-
-:: Install pyscard if missing
-python -c "import smartcard" >nul 2>&1
-if %errorLevel% neq 0 (
-    echo Installing pyscard...
-    pip install --only-binary :all: pyscard --quiet 2>nul
-    if %errorLevel% neq 0 ( pip install pyscard --quiet 2>nul )
 )
 
 :: Install EasyOCR if missing
