@@ -6,7 +6,7 @@ echo   NFC Bridge Server - Start
 echo ========================================
 echo.
 
-:: Force Python 3.13
+:: Force Python 3.13 ONLY
 set PYTHON_CMD=
 set NEED_RESTART=0
 
@@ -14,27 +14,34 @@ set NEED_RESTART=0
 py -3.13 --version >nul 2>&1
 if %errorLevel% equ 0 (
     set PYTHON_CMD=py -3.13
-    py -3.13 --version
+    for /f "tokens=*" %%v in ('py -3.13 --version 2^>^&1') do echo %%v
     goto :python_ready
 )
 
 :: Python 3.13 not found - install it
-echo [INFO] Python 3.13 not found. Installing...
+echo.
+echo ========================================
+echo   Python 3.13 Required - Installing...
+echo ========================================
+echo.
+echo Python 3.14 has compatibility issues with packages.
+echo Installing Python 3.13...
 echo.
 
 :: Try winget first
 winget --version >nul 2>&1
 if %errorLevel% equ 0 (
-    echo Installing Python 3.13 via winget...
+    echo Using winget...
     winget install Python.Python.3.13 --accept-source-agreements --accept-package-agreements --silent
     if %errorLevel% equ 0 (
         set NEED_RESTART=1
         goto :check_restart
     )
+    echo winget failed, trying direct download...
 )
 
-:: winget failed, download directly
-echo Downloading Python 3.13...
+:: Download directly
+echo Downloading from python.org...
 set INSTALLER=%TEMP%\python-3.13-installer.exe
 curl -L -o "%INSTALLER%" "https://www.python.org/ftp/python/3.13.1/python-3.13.1-amd64.exe" 2>nul
 if not exist "%INSTALLER%" (
@@ -42,7 +49,7 @@ if not exist "%INSTALLER%" (
 )
 
 if exist "%INSTALLER%" (
-    echo Installing Python 3.13...
+    echo Running installer...
     "%INSTALLER%" /passive InstallAllUsers=1 PrependPath=1 Include_test=0
     del "%INSTALLER%" 2>nul
     set NEED_RESTART=1
@@ -50,7 +57,7 @@ if exist "%INSTALLER%" (
 )
 
 echo [ERROR] Failed to install Python 3.13
-echo Please install manually from: https://www.python.org/downloads/release/python-3131/
+echo Please install manually: https://www.python.org/downloads/release/python-3131/
 pause
 exit /b 1
 
@@ -61,7 +68,7 @@ if %NEED_RESTART% equ 1 (
     echo   Python 3.13 Installed!
     echo ========================================
     echo.
-    echo Please close this window and run start_server.bat again.
+    echo IMPORTANT: Close this window and run start_server.bat again.
     echo.
     pause
     exit /b 0
@@ -70,16 +77,23 @@ if %NEED_RESTART% equ 1 (
 :python_ready
 echo.
 
-:: Remove old venv if wrong Python version
-if exist "venv\pyvenv.cfg" (
-    findstr /c:"3.13" "venv\pyvenv.cfg" >nul 2>&1
-    if %errorLevel% neq 0 (
-        echo Removing old virtual environment...
+:: ALWAYS delete venv if it's not Python 3.13
+if exist "venv\Scripts\python.exe" (
+    echo Checking virtual environment Python version...
+    for /f "tokens=2 delims= " %%v in ('"venv\Scripts\python.exe" --version 2^>^&1') do set VENV_VER=%%v
+    echo Current venv: Python !VENV_VER!
+    
+    echo !VENV_VER! | findstr /b "3.13" >nul
+    if !errorLevel! neq 0 (
+        echo.
+        echo [WARNING] venv is Python !VENV_VER!, not 3.13!
+        echo Deleting old venv and recreating with Python 3.13...
         rmdir /s /q venv 2>nul
+        echo.
     )
 )
 
-:: Create venv if not exists
+:: Create venv with Python 3.13
 if not exist "venv\Scripts\activate.bat" (
     echo Creating virtual environment with Python 3.13...
     %PYTHON_CMD% -m venv venv
@@ -88,17 +102,39 @@ if not exist "venv\Scripts\activate.bat" (
         pause
         exit /b 1
     )
+    echo Virtual environment created.
+    echo.
 )
 
 :: Activate venv
 call "venv\Scripts\activate.bat"
 
-:: Check if core dependencies are installed
+:: Verify Python version in venv
+for /f "tokens=2 delims= " %%v in ('python --version 2^>^&1') do set ACTIVE_VER=%%v
+echo Active Python: !ACTIVE_VER!
+
+echo !ACTIVE_VER! | findstr /b "3.13" >nul
+if !errorLevel! neq 0 (
+    echo.
+    echo [ERROR] Wrong Python version in venv: !ACTIVE_VER!
+    echo Expected: 3.13.x
+    echo.
+    echo Deleting venv and retrying...
+    deactivate 2>nul
+    rmdir /s /q venv 2>nul
+    
+    echo Creating fresh venv...
+    %PYTHON_CMD% -m venv venv
+    call "venv\Scripts\activate.bat"
+)
+
+echo.
+
+:: Install core dependencies if missing
 python -c "import websockets" >nul 2>&1
 if %errorLevel% neq 0 (
-    echo.
     echo ========================================
-    echo   Installing Dependencies
+    echo   Installing Core Dependencies
     echo ========================================
     echo.
     
@@ -124,28 +160,22 @@ if %errorLevel% neq 0 (
     pip install --only-binary :all: pyscard --quiet 2>nul
     if %errorLevel% neq 0 (
         pip install pyscard --quiet 2>nul
-        if %errorLevel% neq 0 (
-            echo       FAILED - NFC may not work
-        ) else (
-            echo       OK
-        )
+        if %errorLevel% neq 0 ( echo       FAILED ) else ( echo       OK )
     ) else (
         echo       OK
     )
     echo.
 )
 
-:: Check and install pyscard if missing
+:: Install pyscard if missing
 python -c "import smartcard" >nul 2>&1
 if %errorLevel% neq 0 (
     echo Installing pyscard...
     pip install --only-binary :all: pyscard --quiet 2>nul
-    if %errorLevel% neq 0 (
-        pip install pyscard --quiet 2>nul
-    )
+    if %errorLevel% neq 0 ( pip install pyscard --quiet 2>nul )
 )
 
-:: Check and install EasyOCR if missing
+:: Install EasyOCR if missing
 python -c "import easyocr" >nul 2>&1
 if %errorLevel% neq 0 (
     echo.
@@ -153,7 +183,7 @@ if %errorLevel% neq 0 (
     echo   Installing EasyOCR + PyTorch
     echo ========================================
     echo.
-    echo This will download ~2GB. Please wait...
+    echo Downloading ~2GB. Please wait...
     echo.
     
     echo Installing PyTorch...
@@ -163,16 +193,19 @@ if %errorLevel% neq 0 (
     )
     
     echo Installing EasyOCR...
-    pip install easyocr --quiet
+    pip install --only-binary :all: easyocr --quiet 2>nul
+    if %errorLevel% neq 0 (
+        pip install easyocr --quiet
+    )
     
+    python -c "import easyocr" >nul 2>&1
     if %errorLevel% equ 0 (
         echo.
-        echo Downloading OCR models (Japanese + English)...
+        echo Downloading OCR models...
         python -c "import easyocr; easyocr.Reader(['ja', 'en'], gpu=False, verbose=False); print('Models loaded!')"
-        echo.
         echo EasyOCR installed!
     ) else (
-        echo [WARNING] EasyOCR installation failed
+        echo [ERROR] Failed to install EasyOCR
     )
     echo.
 )
