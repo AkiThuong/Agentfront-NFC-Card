@@ -171,22 +171,66 @@ if %errorLevel% neq 0 (
     
     python -m pip install --upgrade pip --quiet
     
-    echo [1/5] websockets...
+    echo [1/6] websockets...
     pip install --only-binary :all: websockets --quiet && echo       OK
     
-    echo [2/5] pycryptodome...
+    echo [2/6] pycryptodome...
     pip install --only-binary :all: pycryptodome --quiet && echo       OK
     
-    echo [3/5] Pillow...
+    echo [3/6] Pillow...
     pip install --only-binary :all: Pillow --quiet && echo       OK
     
-    echo [4/5] numpy...
+    echo [4/6] numpy...
     pip install --only-binary :all: numpy --quiet && echo       OK
     
-    echo [5/5] pywin32...
+    echo [5/6] pywin32...
     pip install --only-binary :all: pywin32 --quiet && echo       OK
     python -m pywin32_postinstall -install >nul 2>&1
     
+    echo [6/6] pyscard (NFC reader)...
+    pip install --only-binary :all: pyscard --quiet 2>nul
+    if %errorLevel% neq 0 (
+        echo       Trying alternative install...
+        pip install pyscard --quiet 2>nul
+    )
+    if %errorLevel% equ 0 (
+        echo       OK
+    ) else (
+        echo       [WARNING] pyscard failed - NFC readers may not work
+        echo       See: https://pyscard.sourceforge.io/
+    )
+    
+    echo.
+)
+
+:: Check pyscard is installed (critical for NFC readers)
+python -c "from smartcard.System import readers" >nul 2>&1
+if %errorLevel% neq 0 (
+    echo ========================================
+    echo   Installing pyscard (NFC Reader Library)
+    echo ========================================
+    echo.
+    echo pyscard is required for NFC reader communication.
+    echo.
+    
+    pip install --only-binary :all: pyscard --quiet 2>nul
+    if %errorLevel% neq 0 (
+        echo Binary install failed, trying source install...
+        pip install pyscard --quiet 2>nul
+    )
+    
+    python -c "from smartcard.System import readers" >nul 2>&1
+    if %errorLevel% equ 0 (
+        echo pyscard installed successfully!
+    ) else (
+        echo [WARNING] pyscard installation failed.
+        echo.
+        echo For Windows, you may need to:
+        echo   1. Install SWIG: winget install swig
+        echo   2. Or download pre-built wheel from:
+        echo      https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyscard
+        echo.
+    )
     echo.
 )
 
@@ -250,6 +294,22 @@ if %errorLevel% neq 0 (
             echo [WARNING] OCR installation failed. Card reading may be limited.
         )
     )
+    echo.
+)
+
+:: Check NFC reader status before starting
+echo ========================================
+echo   Checking NFC Reader Status
+echo ========================================
+echo.
+python -c "from smartcard.System import readers; r = readers(); print('Detected readers:', len(r)); [print(f'  - {x}') for x in r] if r else print('  No readers detected!'); print()" 2>nul
+if %errorLevel% neq 0 (
+    echo [WARNING] Could not check readers - pyscard may not be working
+    echo.
+    echo If using Sony PaSoRi (FeliCa reader):
+    echo   1. Install Sony FeliCa port driver from:
+    echo      https://www.sony.co.jp/Products/felica/consumer/download/
+    echo   2. Ensure reader is connected and recognized in Device Manager
     echo.
 )
 

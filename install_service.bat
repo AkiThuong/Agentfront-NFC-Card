@@ -124,6 +124,24 @@ if %errorLevel% neq 0 (
     echo Dependencies installed!
 )
 
+:: Install pyscard (critical for NFC readers including FeliCa)
+python -c "from smartcard.System import readers" >nul 2>&1
+if %errorLevel% neq 0 (
+    echo.
+    echo Installing pyscard (NFC reader library)...
+    pip install --only-binary :all: pyscard --quiet 2>nul
+    if %errorLevel% neq 0 (
+        pip install pyscard --quiet 2>nul
+    )
+    
+    python -c "from smartcard.System import readers" >nul 2>&1
+    if %errorLevel% equ 0 (
+        echo pyscard installed!
+    ) else (
+        echo [WARNING] pyscard failed - NFC readers may not work
+    )
+)
+
 :: Install PaddleOCR if missing (primary OCR engine)
 python -c "import paddleocr" >nul 2>&1
 if %errorLevel% neq 0 (
