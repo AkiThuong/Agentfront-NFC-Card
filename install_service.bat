@@ -124,19 +124,22 @@ if %errorLevel% neq 0 (
     echo Dependencies installed!
 )
 
-:: Install EasyOCR if missing
-python -c "import easyocr" >nul 2>&1
+:: Install PaddleOCR if missing (primary OCR engine)
+python -c "import paddleocr" >nul 2>&1
 if %errorLevel% neq 0 (
     echo.
-    echo Installing EasyOCR + PyTorch (~2GB)...
-    pip install --only-binary :all: torch torchvision --quiet 2>nul
-    if %errorLevel% neq 0 ( pip install torch torchvision --quiet )
-    pip install easyocr --quiet
+    echo Installing PaddleOCR...
+    pip install --only-binary :all: paddlepaddle paddleocr --quiet 2>nul
+    if %errorLevel% neq 0 (
+        pip install paddlepaddle paddleocr --quiet
+    )
     
+    python -c "import paddleocr" >nul 2>&1
     if %errorLevel% equ 0 (
-        echo Downloading OCR models...
-        python -c "import easyocr; easyocr.Reader(['ja', 'en'], gpu=False, verbose=False)"
-        echo EasyOCR installed!
+        echo PaddleOCR installed!
+    ) else (
+        echo [WARNING] PaddleOCR failed, installing EasyOCR fallback...
+        pip install torch torchvision easyocr --quiet 2>nul
     )
 )
 

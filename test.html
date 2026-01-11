@@ -810,7 +810,7 @@
             `;
             
             // Address section (DF2/EF01)
-            if (data.address || data.address_write_date || data.city_code) {
+            if (data.address || data.address_write_date || data.city_code || data.raw_text || data.address_raw) {
                 html += `<div style="background: #f0fdf4; padding: 12px; border-radius: 8px; margin-bottom: 10px;">`;
                 html += `<div style="font-weight: 600; color: #166534; margin-bottom: 8px;">🏠 住居地 / Address</div>`;
                 
@@ -838,39 +838,84 @@
                         </div>
                     `;
                 }
+                // Show raw_text if address wasn't parsed
+                if (!data.address && data.raw_text) {
+                    html += `
+                        <div class="result-item" style="background: white; flex-direction: column; align-items: flex-start;">
+                            <span class="result-label" style="margin-bottom: 4px;">住居地データ (生データ)</span>
+                            <span class="result-value" style="text-align: left; font-family: monospace; font-size: 12px;">${data.raw_text}</span>
+                        </div>
+                    `;
+                }
+                // Show raw hex as fallback if nothing else parsed
+                if (!data.address && !data.raw_text && data.address_raw) {
+                    html += `
+                        <div class="result-item" style="background: #fef3c7; flex-direction: column; align-items: flex-start;">
+                            <span class="result-label" style="margin-bottom: 4px;">⚠️ 住居地（未解析）</span>
+                            <span class="result-value" style="text-align: left; font-family: monospace; font-size: 10px; word-break: break-all; color: #92400e;">${data.address_raw}</span>
+                            <span style="font-size: 10px; color: #6b7280; margin-top: 4px;">データは読み取れましたが、テキストへの変換ができませんでした</span>
+                        </div>
+                    `;
+                }
                 html += `</div>`;
             }
             
             // Work Permission / Endorsements section (DF2/EF02-04)
             const hasEndorsements = data.work_permission_general || data.work_permission_specific || data.status_update_application;
-            if (hasEndorsements) {
+            const hasRawEndorsements = data.endorsement_1_raw || data.endorsement_2_raw || data.endorsement_3_raw;
+            
+            if (hasEndorsements || hasRawEndorsements) {
                 html += `<div style="background: #fef3c7; padding: 12px; border-radius: 8px; margin-bottom: 10px;">`;
                 html += `<div style="font-weight: 600; color: #92400e; margin-bottom: 8px;">📋 裏面追記欄 / Endorsements</div>`;
                 
                 if (data.work_permission_general) {
                     html += `
                         <div class="result-item" style="background: white; flex-direction: column; align-items: flex-start;">
-                            <span class="result-label" style="margin-bottom: 4px;">資格外活動包括許可</span>
+                            <span class="result-label" style="margin-bottom: 4px;">資格外活動包括許可 (EF02)</span>
                             <span class="result-value" style="text-align: left;">${data.work_permission_general}</span>
                         </div>
                     `;
+                } else if (data.endorsement_1_raw) {
+                    html += `
+                        <div class="result-item" style="background: #fffbeb; flex-direction: column; align-items: flex-start;">
+                            <span class="result-label" style="margin-bottom: 4px;">⚠️ 資格外活動包括許可 (EF02 - 未解析)</span>
+                            <span class="result-value" style="text-align: left; font-family: monospace; font-size: 10px; word-break: break-all;">${data.endorsement_1_raw}</span>
+                        </div>
+                    `;
                 }
+                
                 if (data.work_permission_specific) {
                     html += `
                         <div class="result-item" style="background: white; flex-direction: column; align-items: flex-start;">
-                            <span class="result-label" style="margin-bottom: 4px;">資格外活動個別許可</span>
+                            <span class="result-label" style="margin-bottom: 4px;">資格外活動個別許可 (EF03)</span>
                             <span class="result-value" style="text-align: left;">${data.work_permission_specific}</span>
                         </div>
                     `;
-                }
-                if (data.status_update_application) {
+                } else if (data.endorsement_2_raw) {
                     html += `
-                        <div class="result-item" style="background: white; flex-direction: column; align-items: flex-start;">
-                            <span class="result-label" style="margin-bottom: 4px;">在留期間等更新申請</span>
-                            <span class="result-value" style="text-align: left;">${data.status_update_application}</span>
+                        <div class="result-item" style="background: #fffbeb; flex-direction: column; align-items: flex-start;">
+                            <span class="result-label" style="margin-bottom: 4px;">⚠️ 資格外活動個別許可 (EF03 - 未解析)</span>
+                            <span class="result-value" style="text-align: left; font-family: monospace; font-size: 10px; word-break: break-all;">${data.endorsement_2_raw}</span>
                         </div>
                     `;
                 }
+                
+                if (data.status_update_application) {
+                    html += `
+                        <div class="result-item" style="background: white; flex-direction: column; align-items: flex-start;">
+                            <span class="result-label" style="margin-bottom: 4px;">在留期間等更新申請 (EF04)</span>
+                            <span class="result-value" style="text-align: left;">${data.status_update_application}</span>
+                        </div>
+                    `;
+                } else if (data.endorsement_3_raw) {
+                    html += `
+                        <div class="result-item" style="background: #fffbeb; flex-direction: column; align-items: flex-start;">
+                            <span class="result-label" style="margin-bottom: 4px;">⚠️ 在留期間等更新申請 (EF04 - 未解析)</span>
+                            <span class="result-value" style="text-align: left; font-family: monospace; font-size: 10px; word-break: break-all;">${data.endorsement_3_raw}</span>
+                        </div>
+                    `;
+                }
+                
                 html += `</div>`;
             }
             
