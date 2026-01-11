@@ -9,6 +9,7 @@ echo.
 :: Force Python 3.13 ONLY
 set PYTHON_CMD=
 set NEED_RESTART=0
+set PYSCARD_OK=0
 
 :: Check for Python 3.13 via py launcher
 py -3.13 --version >nul 2>&1
@@ -130,7 +131,9 @@ if not exist "venv\Scripts\activate.bat" (
     %PYTHON_CMD% -m venv venv
     if %errorLevel% neq 0 (
         echo [ERROR] Failed to create virtual environment
-        pause
+        echo.
+        echo Press any key to exit...
+        pause >nul
         exit /b 1
     )
     echo Virtual environment created.
@@ -139,6 +142,11 @@ if not exist "venv\Scripts\activate.bat" (
 
 :: Activate venv
 call "venv\Scripts\activate.bat"
+if %errorLevel% neq 0 (
+    echo [ERROR] Failed to activate virtual environment
+    pause
+    exit /b 1
+)
 
 :: Verify Python version in venv
 for /f "tokens=2 delims= " %%v in ('python --version 2^>^&1') do set ACTIVE_VER=%%v
@@ -171,147 +179,154 @@ if %errorLevel% neq 0 (
     
     python -m pip install --upgrade pip --quiet
     
-    echo [1/6] websockets...
-    pip install --only-binary :all: websockets --quiet && echo       OK
+    echo [1/5] websockets...
+    pip install --only-binary :all: websockets --quiet
+    echo       Done
     
-    echo [2/6] pycryptodome...
-    pip install --only-binary :all: pycryptodome --quiet && echo       OK
+    echo [2/5] pycryptodome...
+    pip install --only-binary :all: pycryptodome --quiet
+    echo       Done
     
-    echo [3/6] Pillow...
-    pip install --only-binary :all: Pillow --quiet && echo       OK
+    echo [3/5] Pillow...
+    pip install --only-binary :all: Pillow --quiet
+    echo       Done
     
-    echo [4/6] numpy...
-    pip install --only-binary :all: numpy --quiet && echo       OK
+    echo [4/5] numpy...
+    pip install --only-binary :all: numpy --quiet
+    echo       Done
     
-    echo [5/6] pywin32...
-    pip install --only-binary :all: pywin32 --quiet && echo       OK
+    echo [5/5] pywin32...
+    pip install --only-binary :all: pywin32 --quiet
     python -m pywin32_postinstall -install >nul 2>&1
+    echo       Done
     
-    echo [6/6] pyscard (NFC reader)...
-    pip install --only-binary :all: pyscard --quiet 2>nul
-    if %errorLevel% neq 0 (
-        echo       Trying alternative install...
-        pip install pyscard --quiet 2>nul
-    )
-    if %errorLevel% equ 0 (
-        echo       OK
-    ) else (
-        echo       [WARNING] pyscard failed - NFC readers may not work
-        echo       See: https://pyscard.sourceforge.io/
-    )
-    
+    echo.
+    echo Core dependencies installed!
     echo.
 )
 
-:: Check pyscard is installed (critical for NFC readers)
+:: Install pyscard separately (critical for NFC readers)
+echo ========================================
+echo   Installing pyscard (NFC Reader)
+echo ========================================
+echo.
+
 python -c "from smartcard.System import readers" >nul 2>&1
-if %errorLevel% neq 0 (
-    echo ========================================
-    echo   Installing pyscard (NFC Reader Library)
-    echo ========================================
-    echo.
-    echo pyscard is required for NFC reader communication.
+if %errorLevel% equ 0 (
+    echo pyscard is already installed.
+    set PYSCARD_OK=1
+) else (
+    echo Installing pyscard...
     echo.
     
-    pip install --only-binary :all: pyscard --quiet 2>nul
-    if %errorLevel% neq 0 (
-        echo Binary install failed, trying source install...
-        pip install pyscard --quiet 2>nul
-    )
+    :: Try binary install first (fastest)
+    pip install --only-binary :all: pyscard 2>nul
     
+    :: Check if it worked
     python -c "from smartcard.System import readers" >nul 2>&1
-    if %errorLevel% equ 0 (
+    if !errorLevel! equ 0 (
         echo pyscard installed successfully!
+        set PYSCARD_OK=1
     ) else (
-        echo [WARNING] pyscard installation failed.
-        echo.
-        echo For Windows, you may need to:
-        echo   1. Install SWIG: winget install swig
-        echo   2. Or download pre-built wheel from:
-        echo      https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyscard
-        echo.
+        echo Binary install failed. Trying source install...
+        pip install pyscard 2>nul
+        
+        python -c "from smartcard.System import readers" >nul 2>&1
+        if !errorLevel! equ 0 (
+            echo pyscard installed successfully!
+            set PYSCARD_OK=1
+        ) else (
+            echo.
+            echo ========================================
+            echo   [WARNING] pyscard installation failed
+            echo ========================================
+            echo.
+            echo NFC reader communication will NOT work without pyscard.
+            echo.
+            echo To fix this manually:
+            echo   1. Install SWIG first:
+            echo      winget install swig
+            echo.
+            echo   2. Then install pyscard:
+            echo      pip install pyscard
+            echo.
+            echo   Or download pre-built wheel from:
+            echo   https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyscard
+            echo.
+            echo Press any key to continue anyway...
+            pause >nul
+        )
     )
-    echo.
 )
+echo.
 
 :: Install PaddleOCR if missing (primary OCR engine)
 python -c "import paddleocr" >nul 2>&1
 if %errorLevel% neq 0 (
-    echo.
     echo ========================================
-    echo   Installing PaddleOCR (Latest Version)
+    echo   Installing PaddleOCR
     echo ========================================
     echo.
-    echo Installing PaddlePaddle + PaddleOCR...
     echo This may take a few minutes...
     echo.
     
-    :: Upgrade pip first to ensure latest package resolution
+    :: Upgrade pip first
     python -m pip install --upgrade pip setuptools wheel --quiet
     
     :: Install shapely first (required dependency)
     echo [1/4] Installing shapely...
     pip install --only-binary :all: shapely --quiet 2>nul
-    if %errorLevel% neq 0 (
-        pip install shapely --quiet
-    )
+    if !errorLevel! neq 0 pip install shapely --quiet 2>nul
+    echo       Done
     
     :: Install PaddlePaddle (CPU version for compatibility)
     echo [2/4] Installing PaddlePaddle...
     pip install paddlepaddle==3.0.0b2 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/ --quiet 2>nul
-    if %errorLevel% neq 0 (
-        echo Trying alternative installation...
+    if !errorLevel! neq 0 (
         pip install paddlepaddle --quiet 2>nul
-        if %errorLevel% neq 0 (
-            pip install paddlepaddle-gpu --quiet 2>nul
-        )
     )
+    echo       Done
     
     :: Install PaddleOCR with all dependencies
     echo [3/4] Installing PaddleOCR...
     pip install "paddleocr>=2.9.0" --quiet 2>nul
-    if %errorLevel% neq 0 (
-        pip install paddleocr --quiet
-    )
+    if !errorLevel! neq 0 pip install paddleocr --quiet 2>nul
+    echo       Done
     
-    :: Install additional dependencies for PP-OCRv4
+    :: Install additional dependencies
     echo [4/4] Installing OCR dependencies...
     pip install opencv-python-headless pyclipper --quiet 2>nul
+    echo       Done
     
+    echo.
     python -c "import paddleocr" >nul 2>&1
-    if %errorLevel% equ 0 (
-        echo.
+    if !errorLevel! equ 0 (
         echo PaddleOCR installed successfully!
-        echo Note: OCR models will download on first use.
     ) else (
-        echo.
-        echo [WARNING] PaddleOCR installation failed.
+        echo [WARNING] PaddleOCR may not be fully installed.
         echo Trying EasyOCR fallback...
         pip install torch torchvision easyocr --quiet 2>nul
-        if %errorLevel% equ 0 (
-            echo EasyOCR installed as fallback.
-        ) else (
-            echo [WARNING] OCR installation failed. Card reading may be limited.
-        )
     )
     echo.
 )
 
-:: Check NFC reader status before starting
+:: Check NFC reader status
 echo ========================================
 echo   Checking NFC Reader Status
 echo ========================================
 echo.
-python -c "from smartcard.System import readers; r = readers(); print('Detected readers:', len(r)); [print(f'  - {x}') for x in r] if r else print('  No readers detected!'); print()" 2>nul
-if %errorLevel% neq 0 (
-    echo [WARNING] Could not check readers - pyscard may not be working
+
+if %PYSCARD_OK% equ 1 (
+    python -c "from smartcard.System import readers; r = readers(); print('Detected readers:', len(r)); [print(f'  - {x}') for x in r] if r else print('  [!] No readers detected - connect your NFC reader')"
+) else (
+    echo [!] pyscard not installed - cannot detect NFC readers
     echo.
-    echo If using Sony PaSoRi (FeliCa reader):
+    echo If using Sony PaSoRi FeliCa reader:
     echo   1. Install Sony FeliCa port driver from:
     echo      https://www.sony.co.jp/Products/felica/consumer/download/
     echo   2. Ensure reader is connected and recognized in Device Manager
-    echo.
 )
+echo.
 
 :: Run the server
 echo ========================================
@@ -324,5 +339,8 @@ echo.
 python server.py
 
 echo.
+echo ========================================
 echo Server stopped.
+echo ========================================
+echo.
 pause
