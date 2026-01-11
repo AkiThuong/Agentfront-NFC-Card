@@ -128,11 +128,28 @@ if %errorLevel% neq 0 (
 python -c "import paddleocr" >nul 2>&1
 if %errorLevel% neq 0 (
     echo.
-    echo Installing PaddleOCR...
-    pip install --only-binary :all: paddlepaddle paddleocr --quiet 2>nul
+    echo Installing PaddleOCR (Latest Version)...
+    
+    :: Upgrade pip first
+    python -m pip install --upgrade pip setuptools wheel --quiet
+    
+    :: Install shapely first (required dependency)
+    pip install --only-binary :all: shapely --quiet 2>nul
+    
+    :: Install PaddlePaddle (CPU version)
+    pip install paddlepaddle==3.0.0b2 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/ --quiet 2>nul
     if %errorLevel% neq 0 (
-        pip install paddlepaddle paddleocr --quiet
+        pip install paddlepaddle --quiet 2>nul
     )
+    
+    :: Install PaddleOCR
+    pip install "paddleocr>=2.9.0" --quiet 2>nul
+    if %errorLevel% neq 0 (
+        pip install paddleocr --quiet
+    )
+    
+    :: Install additional dependencies
+    pip install opencv-python-headless pyclipper --quiet 2>nul
     
     python -c "import paddleocr" >nul 2>&1
     if %errorLevel% equ 0 (

@@ -195,31 +195,60 @@ python -c "import paddleocr" >nul 2>&1
 if %errorLevel% neq 0 (
     echo.
     echo ========================================
-    echo   Installing PaddleOCR
+    echo   Installing PaddleOCR (Latest Version)
     echo ========================================
     echo.
-    echo Downloading PaddlePaddle + PaddleOCR...
+    echo Installing PaddlePaddle + PaddleOCR...
+    echo This may take a few minutes...
     echo.
     
-    echo Installing PaddlePaddle...
-    pip install --only-binary :all: paddlepaddle --quiet 2>nul
+    :: Upgrade pip first to ensure latest package resolution
+    python -m pip install --upgrade pip setuptools wheel --quiet
+    
+    :: Install shapely first (required dependency)
+    echo [1/4] Installing shapely...
+    pip install --only-binary :all: shapely --quiet 2>nul
     if %errorLevel% neq 0 (
-        pip install paddlepaddle --quiet
+        pip install shapely --quiet
     )
     
-    echo Installing PaddleOCR...
-    pip install --only-binary :all: paddleocr --quiet 2>nul
+    :: Install PaddlePaddle (CPU version for compatibility)
+    echo [2/4] Installing PaddlePaddle...
+    pip install paddlepaddle==3.0.0b2 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/ --quiet 2>nul
+    if %errorLevel% neq 0 (
+        echo Trying alternative installation...
+        pip install paddlepaddle --quiet 2>nul
+        if %errorLevel% neq 0 (
+            pip install paddlepaddle-gpu --quiet 2>nul
+        )
+    )
+    
+    :: Install PaddleOCR with all dependencies
+    echo [3/4] Installing PaddleOCR...
+    pip install "paddleocr>=2.9.0" --quiet 2>nul
     if %errorLevel% neq 0 (
         pip install paddleocr --quiet
     )
     
+    :: Install additional dependencies for PP-OCRv4
+    echo [4/4] Installing OCR dependencies...
+    pip install opencv-python-headless pyclipper --quiet 2>nul
+    
     python -c "import paddleocr" >nul 2>&1
     if %errorLevel% equ 0 (
-        echo PaddleOCR installed!
+        echo.
+        echo PaddleOCR installed successfully!
         echo Note: OCR models will download on first use.
     ) else (
-        echo [WARNING] PaddleOCR installation failed, trying EasyOCR fallback...
+        echo.
+        echo [WARNING] PaddleOCR installation failed.
+        echo Trying EasyOCR fallback...
         pip install torch torchvision easyocr --quiet 2>nul
+        if %errorLevel% equ 0 (
+            echo EasyOCR installed as fallback.
+        ) else (
+            echo [WARNING] OCR installation failed. Card reading may be limited.
+        )
     )
     echo.
 )

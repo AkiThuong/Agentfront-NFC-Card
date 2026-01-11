@@ -128,6 +128,17 @@ class OCRResultCache:
         }
 
 
+class CardType(Enum):
+    """Card types that can be detected"""
+    ZAIRYU = "zairyu"           # Japanese Residence Card (在留カード)
+    MYNUMBER = "mynumber"       # Japanese My Number Card (マイナンバーカード)
+    SUICA = "suica"             # Suica/Pasmo/ICOCA (FeliCa transit cards)
+    CREDIT = "credit"           # EMV Credit/Debit cards
+    PASSPORT = "passport"       # e-Passport / CCCD (ICAO 9303)
+    GENERIC = "generic"         # Unknown NFC card
+    NONE = "none"               # No card detected
+
+
 class BridgeState(Enum):
     IDLE = "idle"
     WAITING_FOR_CARD = "waiting_for_card"
@@ -235,6 +246,173 @@ class NFCBridge:
             return True
         except:
             return False
+    
+    def detect_card_type(self) -> Dict[str, Any]:
+        """
+        Quick card type detection without deep reading.
+        Identifies card type by trying to select various applications.
+        
+        Returns:
+            Dict with card_type, confidence, and basic info (UID, ATR)
+        """
+        if not SMARTCARD_AVAILABLE:
+            return {
+                "success": False,
+                "card_type": CardType.NONE.value,
+                "error": "Smart card library not available"
+            }
+        
+        reader = self.get_reader()
+        if not reader:
+            return {
+                "success": False,
+                "card_type": CardType.NONE.value,
+                "error": "No reader found"
+            }
+        
+        try:
+            conn = reader.createConnection()
+            conn.connect()
+            
+            result = {
+                "success": True,
+                "timestamp": datetime.now().isoformat(),
+                "reader": str(reader)
+            }
+            
+            # Get UID
+            data, sw1, sw2 = conn.transmit(APDU.GET_UID)
+            if sw1 == 0x90 and data:
+                result["uid"] = get_hex_string(data).replace(" ", "")
+            
+            # Get ATR for initial classification
+            atr = conn.getATR()
+            if atr:
+                result["atr"] = get_hex_string(atr)
+                atr_hex = get_hex_string(atr).upper().replace(" ", "")
+                
+                # Check for FeliCa indicators in ATR
+                if "FELICA" in str(reader).upper() or "F0" in atr_hex:
+                    # Likely FeliCa card (Suica, etc.)
+                    result["card_type"] = CardType.SUICA.value
+                    result["card_type_name"] = "FeliCa (Suica/Pasmo/ICOCA)"
+                    result["confidence"] = "high"
+                    conn.disconnect()
+                    return result
+            
+            # Test 1: Try My Number Card JPKI Application
+            mynumber_aid = [0xD3, 0x92, 0xF0, 0x00, 0x26, 0x01, 0x00, 0x00, 0x00, 0x01]
+            select_cmd = [0x00, 0xA4, 0x04, 0x0C, len(mynumber_aid)] + mynumber_aid
+            data, sw1, sw2 = conn.transmit(select_cmd)
+            if sw1 == 0x90:
+                result["card_type"] = CardType.MYNUMBER.value
+                result["card_type_name"] = "マイナンバーカード (My Number Card)"
+                result["card_type_name_en"] = "My Number Card"
+                result["confidence"] = "high"
+                result["jpki_supported"] = True
+                conn.disconnect()
+                return result
+            
+            # Test 1b: Try My Number Profile AP
+            profile_aid = [0xD3, 0x92, 0x10, 0x00, 0x31, 0x00, 0x01, 0x01, 0x04, 0x08]
+            select_cmd = [0x00, 0xA4, 0x04, 0x0C, len(profile_aid)] + profile_aid
+            data, sw1, sw2 = conn.transmit(select_cmd)
+            if sw1 == 0x90:
+                result["card_type"] = CardType.MYNUMBER.value
+                result["card_type_name"] = "マイナンバーカード (My Number Card)"
+                result["card_type_name_en"] = "My Number Card"
+                result["confidence"] = "high"
+                result["profile_ap_supported"] = True
+                conn.disconnect()
+                return result
+            
+            # Test 2: Try Zairyu Card (SELECT MF + DF1)
+            # First SELECT MF
+            mf_cmd = [0x00, 0xA4, 0x00, 0x00, 0x02, 0x3F, 0x00]
+            data, sw1, sw2 = conn.transmit(mf_cmd)
+            mf_success = (sw1 == 0x90)
+            
+            if mf_success:
+                # Try Zairyu DF1 AID
+                zairyu_aid = [0xD3, 0x92, 0xF0, 0x00, 0x4F, 0x02, 0x00, 0x00, 
+                              0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+                select_cmd = [0x00, 0xA4, 0x04, 0x0C, len(zairyu_aid)] + zairyu_aid
+                data, sw1, sw2 = conn.transmit(select_cmd)
+                if sw1 == 0x90:
+                    result["card_type"] = CardType.ZAIRYU.value
+                    result["card_type_name"] = "在留カード (Residence Card)"
+                    result["card_type_name_en"] = "Residence Card"
+                    result["confidence"] = "high"
+                    conn.disconnect()
+                    return result
+            
+            # Test 3: Try ICAO 9303 MRTD (Passport/CCCD)
+            mrtd_aid = [0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01]
+            select_cmd = [0x00, 0xA4, 0x04, 0x0C, len(mrtd_aid)] + mrtd_aid
+            data, sw1, sw2 = conn.transmit(select_cmd)
+            if sw1 == 0x90:
+                result["card_type"] = CardType.PASSPORT.value
+                result["card_type_name"] = "e-Passport / CCCD"
+                result["card_type_name_en"] = "e-Passport or National ID"
+                result["confidence"] = "high"
+                result["mrtd_supported"] = True
+                conn.disconnect()
+                return result
+            
+            # Test 4: Try EMV Credit Card applications
+            emv_aids = [
+                ([0xA0, 0x00, 0x00, 0x00, 0x04, 0x10, 0x10], "Mastercard"),
+                ([0xA0, 0x00, 0x00, 0x00, 0x03, 0x10, 0x10], "Visa"),
+                ([0xA0, 0x00, 0x00, 0x00, 0x25, 0x01, 0x01, 0x01], "American Express"),
+                ([0xA0, 0x00, 0x00, 0x00, 0x65, 0x10, 0x10, 0x01], "JCB"),
+            ]
+            
+            for aid, brand in emv_aids:
+                select_cmd = [0x00, 0xA4, 0x04, 0x00, len(aid)] + aid
+                data, sw1, sw2 = conn.transmit(select_cmd)
+                if sw1 == 0x90 or sw1 == 0x61:
+                    result["card_type"] = CardType.CREDIT.value
+                    result["card_type_name"] = f"クレジットカード ({brand})"
+                    result["card_type_name_en"] = f"Credit Card ({brand})"
+                    result["card_brand"] = brand
+                    result["confidence"] = "high"
+                    conn.disconnect()
+                    return result
+            
+            # If MF selection worked but no specific app found, might be Zairyu
+            if mf_success:
+                result["card_type"] = CardType.ZAIRYU.value
+                result["card_type_name"] = "在留カード (Residence Card) - 推定"
+                result["card_type_name_en"] = "Residence Card (estimated)"
+                result["confidence"] = "medium"
+                result["note"] = "MF selection succeeded, likely Zairyu card"
+                conn.disconnect()
+                return result
+            
+            # Unknown card
+            result["card_type"] = CardType.GENERIC.value
+            result["card_type_name"] = "不明なNFCカード"
+            result["card_type_name_en"] = "Unknown NFC Card"
+            result["confidence"] = "low"
+            
+            conn.disconnect()
+            return result
+            
+        except NoCardException:
+            return {
+                "success": False,
+                "card_type": CardType.NONE.value,
+                "error": "NO_CARD",
+                "error_ja": "カードが検出されません",
+                "error_en": "No card detected on reader"
+            }
+        except Exception as e:
+            logger.error(f"Card detection error: {e}")
+            return {
+                "success": False,
+                "card_type": CardType.NONE.value,
+                "error": str(e)
+            }
     
     def read_generic_card(self) -> Dict[str, Any]:
         """Read any NFC card - try multiple methods"""
@@ -1286,6 +1464,14 @@ class NFCBridge:
                     **result
                 }))
             
+            elif msg_type == "detect_card_type":
+                # Quick card type detection without deep reading
+                result = await self.run_blocking(self.detect_card_type, timeout=10.0)
+                await websocket.send(json.dumps({
+                    "type": "card_type_result",
+                    **result
+                }))
+            
             elif msg_type == "get_status":
                 reader = self.get_reader()
                 await websocket.send(json.dumps({
@@ -1318,6 +1504,7 @@ class NFCBridge:
             "reader_available": reader is not None,
             "reader_name": str(reader) if reader else None,
             "supported_cards": ["generic", "cccd", "zairyu", "mynumber", "suica"],
+            "supported_features": ["detect_card_type"],
             "version": self.VERSION,
             "zairyu_auth": "card_number_only",
             "ocr_available": self.ocr_provider is not None
