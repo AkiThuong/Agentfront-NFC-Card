@@ -631,9 +631,13 @@
             el.formSuica.classList.add('hidden');
             el.formZairyu.classList.add('hidden');
             
-            // Define display labels for My Number card fields
+            // Define display labels for all card fields
             const fieldLabels = {
                 'card_type': 'カード種別',
+                'card_type_name': 'カード種別 (日本語)',
+                'card_type_name_en': 'Card Type (English)',
+                'confidence': '検出信頼度',
+                'card_brand': 'ブランド',
                 'my_number': '個人番号',
                 'name': '氏名',
                 'address': '住所',
@@ -643,18 +647,52 @@
                 'uid': 'UID',
                 'pin_verified': 'PIN認証',
                 'personal_info_read': '個人情報読取',
+                'jpki_supported': 'JPKI対応',
+                'profile_ap_supported': 'Profile AP対応',
+                'mrtd_supported': 'MRTD対応',
                 'timestamp': '読取日時',
                 'reader': 'カードリーダー'
             };
             
             // Priority order for display (important fields first)
-            const priorityFields = ['card_type', 'my_number', 'name', 'address', 'birthdate', 'gender', 'balance'];
+            const priorityFields = ['card_type', 'card_type_name', 'card_type_name_en', 'confidence', 'card_brand', 'my_number', 'name', 'address', 'birthdate', 'gender', 'balance', 'uid'];
             
             let html = '';
             
-            // First, show priority fields
+            // Show card type icon based on detected type
+            const cardType = data.card_type || 'generic';
+            const cardIcons = {
+                'mynumber': '🪪',
+                'zairyu': '🛂',
+                'suica': '🚃',
+                'credit': '💳',
+                'passport': '🛃',
+                'generic': '💳'
+            };
+            const cardIcon = cardIcons[cardType] || '💳';
+            
+            // Add a header showing the detected card type prominently
+            if (data.card_type_name || data.card_type_name_en) {
+                const typeName = data.card_type_name || data.card_type_name_en || cardType;
+                const confidence = data.confidence || 'unknown';
+                const confidenceColor = confidence === 'high' ? '#059669' : confidence === 'medium' ? '#d97706' : '#6b7280';
+                
+                html += `
+                    <div style="text-align: center; margin-bottom: 15px; padding: 15px; background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border-radius: 12px; border: 2px solid #0ea5e9;">
+                        <div style="font-size: 48px; margin-bottom: 8px;">${cardIcon}</div>
+                        <div style="font-size: 18px; font-weight: 700; color: #0369a1;">${typeName}</div>
+                        <div style="font-size: 12px; color: ${confidenceColor}; margin-top: 4px;">
+                            信頼度: ${confidence === 'high' ? '高' : confidence === 'medium' ? '中' : '低'} (${confidence})
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // First, show priority fields (skip ones already shown in header)
             for (const key of priorityFields) {
                 if (data[key] !== undefined) {
+                    // Skip card_type fields already shown in header
+                    if (['card_type', 'card_type_name', 'card_type_name_en', 'confidence'].includes(key) && (data.card_type_name || data.card_type_name_en)) continue;
                     html += renderResultItem(key, data[key], fieldLabels);
                 }
             }

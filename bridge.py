@@ -415,12 +415,15 @@ class NFCBridge:
             }
     
     def read_generic_card(self) -> Dict[str, Any]:
-        """Read any NFC card - try multiple methods"""
+        """Read any NFC card - detect type and return basic info"""
         if not SMARTCARD_AVAILABLE:
             return {
                 "success": True,
                 "data": {
                     "uid": "SIMULATED_" + datetime.now().strftime("%H%M%S"),
+                    "card_type": "generic",
+                    "card_type_name": "シミュレーション",
+                    "card_type_name_en": "Simulation",
                     "simulated": True
                 }
             }
@@ -430,56 +433,44 @@ class NFCBridge:
             return {"success": False, "error": "No reader found"}
         
         try:
-            conn = reader.createConnection()
-            conn.connect()
+            # First, detect the card type using our comprehensive detection
+            type_result = self.detect_card_type()
             
+            if not type_result.get("success"):
+                return {"success": False, "error": type_result.get("error", "Card detection failed")}
+            
+            # Build card data from detection result
             card_data = {
                 "timestamp": datetime.now().isoformat(),
-                "reader": str(reader)
+                "reader": str(reader),
+                "card_type": type_result.get("card_type", "generic"),
+                "card_type_name": type_result.get("card_type_name", "不明なカード"),
+                "card_type_name_en": type_result.get("card_type_name_en", "Unknown Card"),
+                "confidence": type_result.get("confidence", "low")
             }
             
-            # Method 1: Standard GET UID
-            data, sw1, sw2 = conn.transmit(APDU.GET_UID)
-            if sw1 == 0x90:
-                card_data["uid"] = get_hex_string(data).replace(" ", "")
-            else:
-                card_data["uid_status"] = f"SW={sw1:02X}{sw2:02X}"
+            # Copy UID and ATR from detection result
+            if "uid" in type_result:
+                card_data["uid"] = type_result["uid"]
+            if "atr" in type_result:
+                card_data["atr"] = type_result["atr"]
             
-            # Method 2: Get ATR
-            atr = conn.getATR()
-            if atr:
-                card_data["atr"] = get_hex_string(atr)
-                atr_hex = get_hex_string(atr).replace(" ", "")
-                if "80" in atr_hex:
-                    card_data["protocol_hint"] = "T=0 or T=1"
-            
-            # Method 3: Try MRTD application
-            data, sw1, sw2 = conn.transmit(APDU.SELECT_MRTD_APP)
-            if sw1 == 0x90:
-                card_data["card_type"] = "ICAO 9303 (CCCD/ePassport)"
+            # Copy any card-specific flags
+            if type_result.get("jpki_supported"):
+                card_data["jpki_supported"] = True
+            if type_result.get("profile_ap_supported"):
+                card_data["profile_ap_supported"] = True
+            if type_result.get("mrtd_supported"):
                 card_data["mrtd_supported"] = True
-            else:
-                card_data["mrtd_status"] = f"SW={sw1:02X}{sw2:02X}"
-                card_data["mrtd_supported"] = False
-            
-            # Method 4: SELECT MF
-            select_mf = [0x00, 0xA4, 0x00, 0x00, 0x02, 0x3F, 0x00]
-            data, sw1, sw2 = conn.transmit(select_mf)
-            if sw1 == 0x90 or sw1 == 0x61:
-                card_data["master_file"] = True
-            
-            # Determine card type from ATR
-            if atr:
-                atr_str = get_hex_string(atr).upper()
-                if "FELICA" in str(reader).upper() or "3B8F8001804F" in atr_str.replace(" ", ""):
-                    card_data["card_type"] = "Possibly FeliCa or Type-B"
-                elif "3B" in atr_str[:2]:
-                    card_data["card_type"] = "ISO 14443 Smart Card"
-            
-            conn.disconnect()
+            if type_result.get("card_brand"):
+                card_data["card_brand"] = type_result["card_brand"]
+            if type_result.get("note"):
+                card_data["note"] = type_result["note"]
             
             return {"success": True, "data": card_data}
             
+        except NoCardException:
+            return {"success": False, "error": "No card on reader"}
         except Exception as e:
             logger.error(f"Read error: {e}")
             return {"success": False, "error": str(e)}
