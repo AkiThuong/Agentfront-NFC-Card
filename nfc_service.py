@@ -35,6 +35,10 @@ from pathlib import Path
 script_dir = Path(__file__).parent.resolve()
 sys.path.insert(0, str(script_dir))
 
+# Determine the venv Python executable path for service registration
+VENV_PYTHON = script_dir / "venv" / "Scripts" / "python.exe"
+SERVICE_PYTHON = str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable
+
 # Try to import win32 service components
 try:
     import win32serviceutil
@@ -150,9 +154,17 @@ if WIN32_AVAILABLE:
         _svc_display_name_ = "NFC Bridge Server"
         _svc_description_ = "WebSocket server for NFC card reading (CCCD, My Number, Suica)"
         
+        # Use the venv Python executable for the service
+        _exe_name_ = SERVICE_PYTHON
+        _exe_args_ = f'"{script_dir / "nfc_service.py"}"'
+        
         def __init__(self, args):
             win32serviceutil.ServiceFramework.__init__(self, args)
             self.stop_event = win32event.CreateEvent(None, 0, 0, None)
+            
+            # Change to script directory so imports work correctly
+            os.chdir(str(script_dir))
+            
             self.service = NFCBridgeService()
         
         def SvcStop(self):
@@ -163,6 +175,9 @@ if WIN32_AVAILABLE:
         
         def SvcDoRun(self):
             """Called when the service is asked to start"""
+            # Ensure we're in the correct directory
+            os.chdir(str(script_dir))
+            
             servicemanager.LogMsg(
                 servicemanager.EVENTLOG_INFORMATION_TYPE,
                 servicemanager.PYS_SERVICE_STARTED,
@@ -196,6 +211,46 @@ def run_standalone():
         service.stop()
 
 
+def install_service():
+    """Install the service with explicit venv Python path"""
+    if not WIN32_AVAILABLE:
+        print("ERROR: pywin32 not installed")
+        return False
+    
+    print(f"Installing service with Python: {SERVICE_PYTHON}")
+    print(f"Script directory: {script_dir}")
+    
+    # Check if venv Python exists
+    if not Path(SERVICE_PYTHON).exists():
+        print(f"ERROR: Python executable not found at {SERVICE_PYTHON}")
+        print("Please run start_server.bat first to create the virtual environment.")
+        return False
+    
+    try:
+        # Install with explicit Python path
+        win32serviceutil.InstallService(
+            pythonClassString=f"{Path(__file__).stem}.NFCBridgeWindowsService",
+            serviceName=NFCBridgeWindowsService._svc_name_,
+            displayName=NFCBridgeWindowsService._svc_display_name_,
+            description=NFCBridgeWindowsService._svc_description_,
+            exeName=SERVICE_PYTHON,
+            exeArgs=f'"{script_dir / "nfc_service.py"}"',
+            startType=win32service.SERVICE_AUTO_START,
+        )
+        print(f"Service '{NFCBridgeWindowsService._svc_name_}' installed successfully!")
+        return True
+    except Exception as e:
+        print(f"ERROR installing service: {e}")
+        # Fall back to standard installation
+        print("Trying standard installation...")
+        try:
+            win32serviceutil.HandleCommandLine(NFCBridgeWindowsService, argv=['', 'install'])
+            return True
+        except Exception as e2:
+            print(f"Standard installation also failed: {e2}")
+            return False
+
+
 def main():
     if len(sys.argv) == 1:
         # No arguments - run standalone
@@ -207,7 +262,11 @@ def main():
         if len(sys.argv) > 1 and sys.argv[1] == 'debug':
             # Debug mode - run standalone
             run_standalone()
+        elif len(sys.argv) > 1 and sys.argv[1] == 'install':
+            # Custom install to ensure venv Python is used
+            install_service()
         else:
+            # Handle other commands (start, stop, remove, etc.)
             win32serviceutil.HandleCommandLine(NFCBridgeWindowsService)
     else:
         print("Windows service mode requires pywin32")
