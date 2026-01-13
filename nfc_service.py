@@ -23,8 +23,13 @@ Debug (run in console):
     python nfc_service.py debug
 """
 
-import sys
+# CRITICAL: Set environment variables BEFORE any imports to prevent PaddleOCR timeout
 import os
+os.environ['DISABLE_MODEL_SOURCE_CHECK'] = 'True'  # Skip PaddleOCR network check
+os.environ['PADDLE_PDX_LOCAL_MODEL_SOURCE'] = 'True'  # Use local models only
+os.environ['FLAGS_use_mkldnn'] = 'False'  # Disable MKL-DNN for faster startup
+
+import sys
 import time
 import asyncio
 import logging
@@ -51,14 +56,31 @@ except ImportError:
     print("WARNING: pywin32 not installed - service mode unavailable")
     print("Install: pip install pywin32")
 
-# Import the server module
-try:
-    from server import NFCBridge, HOST, PORT
-    import websockets
-    SERVER_AVAILABLE = True
-except ImportError as e:
-    SERVER_AVAILABLE = False
-    print(f"WARNING: Cannot import server module: {e}")
+# Defer server module import to avoid PaddleOCR initialization at service registration time
+# This will be imported when the service actually starts
+SERVER_AVAILABLE = None  # Will be set to True/False when needed
+NFCBridge = None
+HOST = "localhost"
+PORT = 3005
+
+def _import_server():
+    """Lazy import of server module to defer PaddleOCR initialization"""
+    global SERVER_AVAILABLE, NFCBridge, HOST, PORT
+    if SERVER_AVAILABLE is not None:
+        return SERVER_AVAILABLE
+    
+    try:
+        from server import NFCBridge as _NFCBridge, HOST as _HOST, PORT as _PORT
+        import websockets
+        NFCBridge = _NFCBridge
+        HOST = _HOST
+        PORT = _PORT
+        SERVER_AVAILABLE = True
+        return True
+    except ImportError as e:
+        print(f"WARNING: Cannot import server module: {e}")
+        SERVER_AVAILABLE = False
+        return False
 
 
 class NFCBridgeService:
@@ -118,9 +140,19 @@ class NFCBridgeService:
     def _run_server(self):
         """Run the server in a separate thread"""
         try:
+            self.logger.info("Initializing server components...")
+            
+            # Import server module here (lazy loading to avoid startup timeout)
+            if not _import_server():
+                self.logger.error("Failed to import server module")
+                return
+            
+            import websockets
+            
             self.loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.loop)
             
+            self.logger.info("Creating NFC Bridge...")
             self.bridge = NFCBridge()
             
             async def serve():
@@ -178,12 +210,17 @@ if WIN32_AVAILABLE:
             # Ensure we're in the correct directory
             os.chdir(str(script_dir))
             
+            # Report running status IMMEDIATELY to prevent Windows timeout
+            # The actual server initialization will happen in background thread
+            self.ReportServiceStatus(win32service.SERVICE_RUNNING)
+            
             servicemanager.LogMsg(
                 servicemanager.EVENTLOG_INFORMATION_TYPE,
                 servicemanager.PYS_SERVICE_STARTED,
                 (self._svc_name_, '')
             )
             
+            # Start server in background (PaddleOCR initialization happens here)
             self.service.start()
             
             # Wait for stop event
@@ -192,6 +229,9 @@ if WIN32_AVAILABLE:
 
 def run_standalone():
     """Run the server standalone (not as a service)"""
+    # Import server module to get actual HOST/PORT
+    _import_server()
+    
     print("=" * 60)
     print("  NFC Bridge Server - Standalone Mode")
     print("=" * 60)
