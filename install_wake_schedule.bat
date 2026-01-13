@@ -9,8 +9,8 @@ echo   PC Wake/Sleep Schedule Installer
 echo ========================================
 echo.
 echo This will configure your PC to:
-echo   - Wake up at 8:00 AM (Monday-Friday)
-echo   - Sleep at 6:00 PM (Monday-Friday)
+echo   - Wake up at 8:15 AM (Monday-Friday)
+echo   - Sleep at 5:15 PM (Monday-Friday)
 echo.
 echo Press any key to continue...
 pause >nul
@@ -37,9 +37,9 @@ echo Working directory: %SCRIPT_DIR%
 echo.
 
 :: ========================================
-:: Create Wake PC Task (8 AM)
+:: Create Wake PC Task (8:15 AM)
 :: ========================================
-echo Step 1: Creating Wake PC task for 8:00 AM...
+echo Step 1: Creating Wake PC task for 8:15 AM...
 echo.
 
 :: Remove existing task if exists
@@ -54,11 +54,11 @@ echo   Creating task XML at: %WAKE_TASK_XML%
 echo ^<?xml version="1.0" encoding="UTF-16"?^>
 echo ^<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"^>
 echo   ^<RegistrationInfo^>
-echo     ^<Description^>Wake PC for AgentFront at 8 AM^</Description^>
+echo     ^<Description^>Wake PC for AgentFront at 8:15 AM^</Description^>
 echo   ^</RegistrationInfo^>
 echo   ^<Triggers^>
 echo     ^<CalendarTrigger^>
-echo       ^<StartBoundary^>2024-01-01T08:00:00^</StartBoundary^>
+echo       ^<StartBoundary^>2024-01-01T08:15:00^</StartBoundary^>
 echo       ^<Enabled^>true^</Enabled^>
 echo       ^<ScheduleByWeek^>
 echo         ^<DaysOfWeek^>
@@ -94,7 +94,7 @@ echo   ^</Settings^>
 echo   ^<Actions Context="Author"^>
 echo     ^<Exec^>
 echo       ^<Command^>cmd.exe^</Command^>
-echo       ^<Arguments^>/c echo PC Woken at 8 AM^</Arguments^>
+echo       ^<Arguments^>/c echo PC Woken at 8:15 AM^</Arguments^>
 echo     ^</Exec^>
 echo   ^</Actions^>
 echo ^</Task^>
@@ -117,9 +117,9 @@ if %errorLevel% equ 0 (
 echo.
 
 :: ========================================
-:: Create Sleep PC Task (6 PM)
+:: Create Sleep PC Task (5:15 PM)
 :: ========================================
-echo Step 2: Creating Sleep PC task for 6:00 PM...
+echo Step 2: Creating Sleep PC task for 5:15 PM...
 echo.
 
 :: Remove existing task if exists
@@ -152,11 +152,11 @@ echo   Creating task XML at: %SLEEP_TASK_XML%
 echo ^<?xml version="1.0" encoding="UTF-16"?^>
 echo ^<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"^>
 echo   ^<RegistrationInfo^>
-echo     ^<Description^>Put PC to sleep for AgentFront at 6 PM^</Description^>
+echo     ^<Description^>Put PC to sleep for AgentFront at 5:15 PM^</Description^>
 echo   ^</RegistrationInfo^>
 echo   ^<Triggers^>
 echo     ^<CalendarTrigger^>
-echo       ^<StartBoundary^>2024-01-01T18:00:00^</StartBoundary^>
+echo       ^<StartBoundary^>2024-01-01T17:15:00^</StartBoundary^>
 echo       ^<Enabled^>true^</Enabled^>
 echo       ^<ScheduleByWeek^>
 echo         ^<DaysOfWeek^>
@@ -229,11 +229,11 @@ echo ========================================
 echo   Scheduled Tasks Status
 echo ========================================
 echo.
-echo Wake Task (8:00 AM):
+echo Wake Task (8:15 AM):
 schtasks /query /tn "AgentFront_WakePC" /fo list 2>nul | findstr "TaskName Status Next"
 if %errorLevel% neq 0 echo   [NOT FOUND]
 echo.
-echo Sleep Task (6:00 PM):
+echo Sleep Task (5:15 PM):
 schtasks /query /tn "AgentFront_SleepPC" /fo list 2>nul | findstr "TaskName Status Next"
 if %errorLevel% neq 0 echo   [NOT FOUND]
 echo.
@@ -243,8 +243,8 @@ echo   Installation Complete
 echo ========================================
 echo.
 echo Schedule:
-echo   - PC wakes at 8:00 AM (Mon-Fri)
-echo   - PC sleeps at 6:00 PM (Mon-Fri)
+echo   - PC wakes at 8:15 AM (Mon-Fri)
+echo   - PC sleeps at 5:15 PM (Mon-Fri)
 echo.
 echo IMPORTANT: For wake to work:
 echo   1. Your BIOS must support wake timers
