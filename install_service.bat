@@ -359,16 +359,24 @@ echo Configuring auto-start...
 sc config NFCBridgeService start= auto >nul 2>&1
 echo Done.
 
-:: Start the service
+:: Start the service using net start (more reliable than python script)
 echo.
 echo ========================================
 echo   Starting Service
 echo ========================================
 echo.
-"%VENV_PYTHON%" nfc_service.py start
+echo Starting service (this may take a moment for initialization)...
+echo.
 
-:: Verify service is running
-timeout /t 3 /nobreak >nul
+:: Use net start with longer timeout (more reliable)
+net start NFCBridgeService 2>nul
+set START_RESULT=%errorLevel%
+
+:: Give extra time for background initialization
+echo Waiting for server initialization...
+timeout /t 5 /nobreak >nul
+
+:: Check if service is running
 sc query NFCBridgeService | findstr "RUNNING" >nul 2>&1
 if %errorLevel% equ 0 (
     echo.
@@ -395,14 +403,35 @@ if %errorLevel% equ 0 (
     echo   Service Installed (Not Running)
     echo ========================================
     echo.
-    echo The service was installed but may not be running.
+    echo The service was installed but failed to start.
+    echo This is common with complex Python applications.
     echo.
-    echo Debug steps:
-    echo   1. Check status: sc query NFCBridgeService
-    echo   2. Check logs: type %SCRIPT_DIR%nfc_service.log
+    echo RECOMMENDED: Use Task Scheduler instead!
+    echo   Run: install_startup.bat
+    echo.
+    echo This method is more reliable for:
+    echo   - PaddleOCR/PyTorch applications
+    echo   - NFC reader access
+    echo   - Interactive services
+    echo.
+    echo Debug steps (if you want to try Windows Service):
+    echo   1. Check logs: type %SCRIPT_DIR%nfc_service.log
+    echo   2. Check Event Viewer: eventvwr.msc
     echo   3. Try starting manually: net start NFCBridgeService
-    echo   4. Or run standalone: start_server.bat
     echo.
+    
+    :: Offer to install Task Scheduler alternative
+    echo.
+    set /p USE_TASK="Install Task Scheduler auto-start instead? (Y/N): "
+    if /i "!USE_TASK!"=="Y" (
+        echo.
+        echo Removing service and setting up Task Scheduler...
+        net stop NFCBridgeService >nul 2>&1
+        sc delete NFCBridgeService >nul 2>&1
+        
+        call install_startup.bat
+        exit /b 0
+    )
 )
 
 pause

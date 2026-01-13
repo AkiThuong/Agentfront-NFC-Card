@@ -96,18 +96,32 @@ class NFCBridgeService:
         self.server = None
         self.loop = None
         self.server_thread = None
+        self.logger = None
         
-        # Setup logging
-        log_path = script_dir / 'nfc_service.log'
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler(str(log_path), encoding='utf-8'),
-                logging.StreamHandler()
-            ]
-        )
-        self.logger = logging.getLogger(__name__)
+        # Setup logging with error handling (service may run as SYSTEM)
+        self._setup_logging()
+    
+    def _setup_logging(self):
+        """Setup logging with fallbacks for service environment"""
+        try:
+            log_path = script_dir / 'nfc_service.log'
+            
+            # Clear any existing handlers
+            root_logger = logging.getLogger()
+            root_logger.handlers.clear()
+            
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - %(message)s',
+                handlers=[
+                    logging.FileHandler(str(log_path), encoding='utf-8'),
+                ]
+            )
+            self.logger = logging.getLogger(__name__)
+        except Exception as e:
+            # Fallback to null logger if file logging fails
+            self.logger = logging.getLogger(__name__)
+            self.logger.addHandler(logging.NullHandler())
     
     def start(self):
         """Start the service"""
@@ -186,45 +200,63 @@ if WIN32_AVAILABLE:
         _svc_display_name_ = "NFC Bridge Server"
         _svc_description_ = "WebSocket server for NFC card reading (CCCD, My Number, Suica)"
         
-        # Use the venv Python executable for the service
-        _exe_name_ = SERVICE_PYTHON
-        _exe_args_ = f'"{script_dir / "nfc_service.py"}"'
-        
         def __init__(self, args):
             win32serviceutil.ServiceFramework.__init__(self, args)
             self.stop_event = win32event.CreateEvent(None, 0, 0, None)
+            self.service = None
             
-            # Change to script directory so imports work correctly
-            os.chdir(str(script_dir))
-            
-            self.service = NFCBridgeService()
+            try:
+                # Change to script directory so imports work correctly
+                os.chdir(str(script_dir))
+                
+                # Create service instance (minimal initialization)
+                self.service = NFCBridgeService()
+            except Exception as e:
+                # Log error but don't fail - service will handle it in SvcDoRun
+                try:
+                    servicemanager.LogErrorMsg(f"Service init error: {e}")
+                except:
+                    pass
         
         def SvcStop(self):
             """Called when the service is asked to stop"""
             self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
-            self.service.stop()
+            try:
+                if self.service:
+                    self.service.stop()
+            except Exception:
+                pass
             win32event.SetEvent(self.stop_event)
         
         def SvcDoRun(self):
             """Called when the service is asked to start"""
-            # Ensure we're in the correct directory
-            os.chdir(str(script_dir))
-            
-            # Report running status IMMEDIATELY to prevent Windows timeout
-            # The actual server initialization will happen in background thread
-            self.ReportServiceStatus(win32service.SERVICE_RUNNING)
-            
-            servicemanager.LogMsg(
-                servicemanager.EVENTLOG_INFORMATION_TYPE,
-                servicemanager.PYS_SERVICE_STARTED,
-                (self._svc_name_, '')
-            )
-            
-            # Start server in background (PaddleOCR initialization happens here)
-            self.service.start()
-            
-            # Wait for stop event
-            win32event.WaitForSingleObject(self.stop_event, win32event.INFINITE)
+            try:
+                # Ensure we're in the correct directory
+                os.chdir(str(script_dir))
+                
+                # Report running status IMMEDIATELY to prevent Windows timeout
+                # The actual server initialization will happen in background thread
+                self.ReportServiceStatus(win32service.SERVICE_RUNNING)
+                
+                servicemanager.LogMsg(
+                    servicemanager.EVENTLOG_INFORMATION_TYPE,
+                    servicemanager.PYS_SERVICE_STARTED,
+                    (self._svc_name_, '')
+                )
+                
+                # Create service if not already created
+                if self.service is None:
+                    self.service = NFCBridgeService()
+                
+                # Start server in background (PaddleOCR initialization happens here)
+                self.service.start()
+                
+                # Wait for stop event
+                win32event.WaitForSingleObject(self.stop_event, win32event.INFINITE)
+                
+            except Exception as e:
+                servicemanager.LogErrorMsg(f"Service error: {e}")
+                self.SvcStop()
 
 
 def run_standalone():
@@ -252,43 +284,46 @@ def run_standalone():
 
 
 def install_service():
-    """Install the service with explicit venv Python path"""
+    """Install the service using standard pywin32 approach"""
     if not WIN32_AVAILABLE:
         print("ERROR: pywin32 not installed")
         return False
     
-    print(f"Installing service with Python: {SERVICE_PYTHON}")
     print(f"Script directory: {script_dir}")
+    print(f"Python executable: {sys.executable}")
     
-    # Check if venv Python exists
-    if not Path(SERVICE_PYTHON).exists():
-        print(f"ERROR: Python executable not found at {SERVICE_PYTHON}")
-        print("Please run start_server.bat first to create the virtual environment.")
-        return False
+    # Check if we're running from venv
+    if VENV_PYTHON.exists() and str(VENV_PYTHON) not in sys.executable:
+        print(f"\nWARNING: Not running from venv!")
+        print(f"Expected: {VENV_PYTHON}")
+        print(f"Current:  {sys.executable}")
+        print()
     
     try:
-        # Install with explicit Python path
-        win32serviceutil.InstallService(
-            pythonClassString=f"{Path(__file__).stem}.NFCBridgeWindowsService",
-            serviceName=NFCBridgeWindowsService._svc_name_,
-            displayName=NFCBridgeWindowsService._svc_display_name_,
-            description=NFCBridgeWindowsService._svc_description_,
-            exeName=SERVICE_PYTHON,
-            exeArgs=f'"{script_dir / "nfc_service.py"}"',
-            startType=win32service.SERVICE_AUTO_START,
-        )
-        print(f"Service '{NFCBridgeWindowsService._svc_name_}' installed successfully!")
+        # Use standard pywin32 installation (uses pythonservice.exe)
+        win32serviceutil.HandleCommandLine(NFCBridgeWindowsService, argv=['', 'install'])
+        print(f"\nService '{NFCBridgeWindowsService._svc_name_}' installed successfully!")
+        
+        # Set service description
+        try:
+            import win32api
+            import win32con
+            key = win32api.RegOpenKeyEx(
+                win32con.HKEY_LOCAL_MACHINE,
+                f"SYSTEM\\CurrentControlSet\\Services\\{NFCBridgeWindowsService._svc_name_}",
+                0,
+                win32con.KEY_SET_VALUE
+            )
+            win32api.RegSetValueEx(key, "Description", 0, win32con.REG_SZ, 
+                                   NFCBridgeWindowsService._svc_description_)
+            win32api.RegCloseKey(key)
+        except:
+            pass  # Description is optional
+        
         return True
     except Exception as e:
         print(f"ERROR installing service: {e}")
-        # Fall back to standard installation
-        print("Trying standard installation...")
-        try:
-            win32serviceutil.HandleCommandLine(NFCBridgeWindowsService, argv=['', 'install'])
-            return True
-        except Exception as e2:
-            print(f"Standard installation also failed: {e2}")
-            return False
+        return False
 
 
 def main():
