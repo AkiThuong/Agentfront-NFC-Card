@@ -1,6 +1,9 @@
 @echo off
 setlocal enabledelayedexpansion
 
+title PC Wake/Sleep Schedule Installer
+
+echo.
 echo ========================================
 echo   PC Wake/Sleep Schedule Installer
 echo ========================================
@@ -9,34 +12,43 @@ echo This will configure your PC to:
 echo   - Wake up at 8:00 AM (Monday-Friday)
 echo   - Sleep at 6:00 PM (Monday-Friday)
 echo.
+echo Press any key to continue...
+pause >nul
 
 :: Check for admin rights
 net session >nul 2>&1
 if %errorLevel% neq 0 (
+    echo.
     echo [ERROR] Please run as Administrator!
     echo.
     echo Right-click this file and select "Run as administrator"
     echo.
-    pause
+    echo Press any key to exit...
+    pause >nul
     exit /b 1
 )
 
-echo Running as Administrator - OK
+echo [OK] Running as Administrator
 echo.
 
 :: Get script directory
-set SCRIPT_DIR=%~dp0
+set "SCRIPT_DIR=%~dp0"
+echo Working directory: %SCRIPT_DIR%
+echo.
 
 :: ========================================
 :: Create Wake PC Task (8 AM)
 :: ========================================
-echo Creating Wake PC task for 8:00 AM...
+echo Step 1: Creating Wake PC task for 8:00 AM...
+echo.
 
 :: Remove existing task if exists
+echo   Removing existing task...
 schtasks /delete /tn "AgentFront_WakePC" /f >nul 2>&1
 
 :: Create XML for wake task with wake timer enabled
-set WAKE_TASK_XML=%SCRIPT_DIR%_wake_task.xml
+set "WAKE_TASK_XML=%SCRIPT_DIR%_wake_task.xml"
+echo   Creating task XML at: %WAKE_TASK_XML%
 
 (
 echo ^<?xml version="1.0" encoding="UTF-16"?^>
@@ -88,25 +100,36 @@ echo   ^</Actions^>
 echo ^</Task^>
 ) > "%WAKE_TASK_XML%"
 
+if exist "%WAKE_TASK_XML%" (
+    echo   [OK] XML file created
+) else (
+    echo   [ERROR] Failed to create XML file
+)
+
 :: Import the wake task
+echo   Importing task to scheduler...
 schtasks /create /tn "AgentFront_WakePC" /xml "%WAKE_TASK_XML%" /f
 if %errorLevel% equ 0 (
-    echo [OK] Wake PC task created successfully
+    echo   [OK] Wake PC task created successfully
 ) else (
-    echo [ERROR] Failed to create wake task
+    echo   [ERROR] Failed to create wake task (Error: %errorLevel%)
 )
 echo.
 
 :: ========================================
 :: Create Sleep PC Task (6 PM)
 :: ========================================
-echo Creating Sleep PC task for 6:00 PM...
+echo Step 2: Creating Sleep PC task for 6:00 PM...
+echo.
 
 :: Remove existing task if exists
+echo   Removing existing task...
 schtasks /delete /tn "AgentFront_SleepPC" /f >nul 2>&1
 
 :: Create sleep script
-set SLEEP_SCRIPT=%SCRIPT_DIR%_sleep_pc.bat
+set "SLEEP_SCRIPT=%SCRIPT_DIR%_sleep_pc.bat"
+echo   Creating sleep script at: %SLEEP_SCRIPT%
+
 (
 echo @echo off
 echo :: Give user 60 seconds warning before sleep
@@ -115,8 +138,15 @@ echo timeout /t 60 /nobreak
 echo rundll32.exe powrprof.dll,SetSuspendState 0,1,0
 ) > "%SLEEP_SCRIPT%"
 
+if exist "%SLEEP_SCRIPT%" (
+    echo   [OK] Sleep script created
+) else (
+    echo   [ERROR] Failed to create sleep script
+)
+
 :: Create XML for sleep task
-set SLEEP_TASK_XML=%SCRIPT_DIR%_sleep_task.xml
+set "SLEEP_TASK_XML=%SCRIPT_DIR%_sleep_task.xml"
+echo   Creating task XML at: %SLEEP_TASK_XML%
 
 (
 echo ^<?xml version="1.0" encoding="UTF-16"?^>
@@ -167,22 +197,29 @@ echo   ^</Actions^>
 echo ^</Task^>
 ) > "%SLEEP_TASK_XML%"
 
+if exist "%SLEEP_TASK_XML%" (
+    echo   [OK] XML file created
+) else (
+    echo   [ERROR] Failed to create XML file
+)
+
 :: Import the sleep task
+echo   Importing task to scheduler...
 schtasks /create /tn "AgentFront_SleepPC" /xml "%SLEEP_TASK_XML%" /f
 if %errorLevel% equ 0 (
-    echo [OK] Sleep PC task created successfully
+    echo   [OK] Sleep PC task created successfully
 ) else (
-    echo [ERROR] Failed to create sleep task
+    echo   [ERROR] Failed to create sleep task (Error: %errorLevel%)
 )
 echo.
 
 :: ========================================
 :: Enable Wake Timers in Power Settings
 :: ========================================
-echo Enabling wake timers in power settings...
+echo Step 3: Enabling wake timers in power settings...
 powercfg /SETACVALUEINDEX SCHEME_CURRENT SUB_SLEEP RTCWAKE 1
 powercfg /SETACTIVE SCHEME_CURRENT
-echo [OK] Wake timers enabled
+echo   [OK] Wake timers enabled
 echo.
 
 :: ========================================
@@ -193,11 +230,11 @@ echo   Scheduled Tasks Status
 echo ========================================
 echo.
 echo Wake Task (8:00 AM):
-schtasks /query /tn "AgentFront_WakePC" /fo list 2>nul | findstr "TaskName Status"
+schtasks /query /tn "AgentFront_WakePC" /fo list 2>nul | findstr "TaskName Status Next"
 if %errorLevel% neq 0 echo   [NOT FOUND]
 echo.
 echo Sleep Task (6:00 PM):
-schtasks /query /tn "AgentFront_SleepPC" /fo list 2>nul | findstr "TaskName Status"
+schtasks /query /tn "AgentFront_SleepPC" /fo list 2>nul | findstr "TaskName Status Next"
 if %errorLevel% neq 0 echo   [NOT FOUND]
 echo.
 
@@ -218,4 +255,6 @@ echo To remove these tasks:
 echo   schtasks /delete /tn "AgentFront_WakePC" /f
 echo   schtasks /delete /tn "AgentFront_SleepPC" /f
 echo.
-pause
+echo ========================================
+echo Press any key to exit...
+pause >nul
