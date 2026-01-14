@@ -10,7 +10,7 @@ echo ========================================
 echo.
 echo This will configure your PC to:
 echo   - Sleep at 7:25 PM
-echo   - Wake at 7:27 PM and restart immediately
+echo   - Wake at 7:35 PM and restart immediately
 echo.
 echo Press any key to continue...
 pause >nul
@@ -130,7 +130,7 @@ echo.
 :: ========================================
 :: Step 2: Create Wake + Restart PC Task (7:27 PM)
 :: ========================================
-echo Step 2: Creating Wake + Restart PC task for 7:27 PM...
+echo Step 2: Creating Wake + Restart PC task for 7:35 PM...
 echo.
 
 :: Remove existing task if exists
@@ -163,11 +163,11 @@ echo   Creating task XML at: %WAKE_TASK_XML%
 echo ^<?xml version="1.0" encoding="UTF-16"?^>
 echo ^<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"^>
 echo   ^<RegistrationInfo^>
-echo     ^<Description^>Wake PC and Restart for AgentFront Test at 7:27 PM^</Description^>
+echo     ^<Description^>Wake PC and Restart for AgentFront Test at 7:35 PM^</Description^>
 echo   ^</RegistrationInfo^>
 echo   ^<Triggers^>
 echo     ^<CalendarTrigger^>
-echo       ^<StartBoundary^>2024-01-01T19:27:00^</StartBoundary^>
+echo       ^<StartBoundary^>2024-01-01T19:35:00^</StartBoundary^>
 echo       ^<Enabled^>true^</Enabled^>
 echo       ^<ScheduleByDay^>
 echo         ^<DaysInterval^>1^</DaysInterval^>
@@ -230,7 +230,7 @@ schtasks /query /tn "AgentFront_Test_SleepPC" /fo list 2>nul | findstr "TaskName
 if %errorLevel% neq 0 echo   [NOT FOUND]
 echo.
 
-echo Wake + Restart Task (7:27 PM):
+echo Wake + Restart Task (7:35 PM):
 schtasks /query /tn "AgentFront_Test_WakeRestartPC" /fo list 2>nul | findstr "TaskName Status Next"
 if %errorLevel% neq 0 echo   [NOT FOUND]
 echo.
@@ -263,7 +263,7 @@ echo ========================================
 echo.
 echo Test Schedule:
 echo   - PC sleeps at 7:25 PM
-echo   - PC wakes at 7:27 PM and restarts immediately
+echo   - PC wakes at 7:35 PM and restarts immediately
 echo.
 echo To remove these test tasks:
 echo   schtasks /delete /tn "AgentFront_Test_SleepPC" /f

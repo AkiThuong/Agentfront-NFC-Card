@@ -12,6 +12,8 @@ echo This will remove all AgentFront scheduled tasks:
 echo   - Wake PC task (if exists)
 echo   - Sleep PC task (if exists)
 echo   - Shutdown PC task (if exists)
+echo   - Test Sleep PC task (if exists)
+echo   - Test Wake+Restart PC task (if exists)
 echo.
 echo Press any key to continue...
 pause >nul
@@ -114,6 +116,26 @@ if exist "%SCRIPT_DIR%_shutdown_task.xml" (
     echo   [OK] Removed _shutdown_task.xml
 )
 
+if exist "%SCRIPT_DIR%_test_sleep_pc.bat" (
+    del "%SCRIPT_DIR%_test_sleep_pc.bat"
+    echo   [OK] Removed _test_sleep_pc.bat
+)
+
+if exist "%SCRIPT_DIR%_test_restart_pc.bat" (
+    del "%SCRIPT_DIR%_test_restart_pc.bat"
+    echo   [OK] Removed _test_restart_pc.bat
+)
+
+if exist "%SCRIPT_DIR%_test_sleep_task.xml" (
+    del "%SCRIPT_DIR%_test_sleep_task.xml"
+    echo   [OK] Removed _test_sleep_task.xml
+)
+
+if exist "%SCRIPT_DIR%_test_wake_task.xml" (
+    del "%SCRIPT_DIR%_test_wake_task.xml"
+    echo   [OK] Removed _test_wake_task.xml
+)
+
 echo.
 
 :: ========================================
@@ -149,6 +171,18 @@ if %errorLevel% equ 0 (
 schtasks /query /tn "AgentFront_ShutdownPC" >nul 2>&1
 if %errorLevel% equ 0 (
     echo   [WARNING] AgentFront_ShutdownPC still exists!
+    set "FOUND=1"
+)
+
+schtasks /query /tn "AgentFront_Test_SleepPC" >nul 2>&1
+if %errorLevel% equ 0 (
+    echo   [WARNING] AgentFront_Test_SleepPC still exists!
+    set "FOUND=1"
+)
+
+schtasks /query /tn "AgentFront_Test_WakeRestartPC" >nul 2>&1
+if %errorLevel% equ 0 (
+    echo   [WARNING] AgentFront_Test_WakeRestartPC still exists!
     set "FOUND=1"
 )
 
