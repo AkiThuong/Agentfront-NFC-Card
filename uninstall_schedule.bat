@@ -14,6 +14,9 @@ echo   - Sleep PC task (if exists)
 echo   - Shutdown PC task (if exists)
 echo   - Test Sleep PC task (if exists)
 echo   - Test Wake+Restart PC task (if exists)
+echo   - Official Wake+Restart task (if exists)
+echo   - Official Sleep task (if exists)
+echo   - Quick Test Wake task (if exists)
 echo.
 echo Press any key to continue...
 pause >nul
@@ -160,6 +163,36 @@ if exist "%SCRIPT_DIR%_test_wake_task.xml" (
     echo   [OK] Removed _test_wake_task.xml
 )
 
+if exist "%SCRIPT_DIR%_official_restart_pc.bat" (
+    del "%SCRIPT_DIR%_official_restart_pc.bat"
+    echo   [OK] Removed _official_restart_pc.bat
+)
+
+if exist "%SCRIPT_DIR%_official_sleep_pc.bat" (
+    del "%SCRIPT_DIR%_official_sleep_pc.bat"
+    echo   [OK] Removed _official_sleep_pc.bat
+)
+
+if exist "%SCRIPT_DIR%_official_wake_task.xml" (
+    del "%SCRIPT_DIR%_official_wake_task.xml"
+    echo   [OK] Removed _official_wake_task.xml
+)
+
+if exist "%SCRIPT_DIR%_official_sleep_task.xml" (
+    del "%SCRIPT_DIR%_official_sleep_task.xml"
+    echo   [OK] Removed _official_sleep_task.xml
+)
+
+if exist "%SCRIPT_DIR%_quicktest_restart.bat" (
+    del "%SCRIPT_DIR%_quicktest_restart.bat"
+    echo   [OK] Removed _quicktest_restart.bat
+)
+
+if exist "%SCRIPT_DIR%_quicktest_wake.xml" (
+    del "%SCRIPT_DIR%_quicktest_wake.xml"
+    echo   [OK] Removed _quicktest_wake.xml
+)
+
 echo.
 
 :: ========================================
@@ -207,6 +240,24 @@ if %errorLevel% equ 0 (
 schtasks /query /tn "AgentFront_Test_WakeRestartPC" >nul 2>&1
 if %errorLevel% equ 0 (
     echo   [WARNING] AgentFront_Test_WakeRestartPC still exists!
+    set "FOUND=1"
+)
+
+schtasks /query /tn "AgentFront_Official_WakeRestart" >nul 2>&1
+if %errorLevel% equ 0 (
+    echo   [WARNING] AgentFront_Official_WakeRestart still exists!
+    set "FOUND=1"
+)
+
+schtasks /query /tn "AgentFront_Official_Sleep" >nul 2>&1
+if %errorLevel% equ 0 (
+    echo   [WARNING] AgentFront_Official_Sleep still exists!
+    set "FOUND=1"
+)
+
+schtasks /query /tn "AgentFront_QuickTest_Wake" >nul 2>&1
+if %errorLevel% equ 0 (
+    echo   [WARNING] AgentFront_QuickTest_Wake still exists!
     set "FOUND=1"
 )
 
