@@ -83,6 +83,30 @@ if %errorLevel% equ 0 (
     echo   [SKIP] Not found
 )
 
+echo   Removing AgentFront_Official_WakeRestart...
+schtasks /delete /tn "AgentFront_Official_WakeRestart" /f >nul 2>&1
+if %errorLevel% equ 0 (
+    echo   [OK] Removed
+) else (
+    echo   [SKIP] Not found
+)
+
+echo   Removing AgentFront_Official_Sleep...
+schtasks /delete /tn "AgentFront_Official_Sleep" /f >nul 2>&1
+if %errorLevel% equ 0 (
+    echo   [OK] Removed
+) else (
+    echo   [SKIP] Not found
+)
+
+echo   Removing AgentFront_QuickTest_Wake...
+schtasks /delete /tn "AgentFront_QuickTest_Wake" /f >nul 2>&1
+if %errorLevel% equ 0 (
+    echo   [OK] Removed
+) else (
+    echo   [SKIP] Not found
+)
+
 echo.
 
 :: ========================================
