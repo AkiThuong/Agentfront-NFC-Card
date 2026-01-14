@@ -52,10 +52,11 @@ echo   Creating sleep script at: %SLEEP_SCRIPT%
 
 (
 echo @echo off
-echo :: Put PC to sleep using powershell
+echo :: Put PC to sleep using PowerShell
 echo echo Putting PC to sleep in 10 seconds...
 echo timeout /t 10 /nobreak
-echo rundll32.exe powrprof.dll,SetSuspendState 0,1,0
+echo :: Use PowerShell for reliable sleep ^(not hibernate/shutdown^)
+echo powershell -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Application]::SetSuspendState('Suspend', $false, $false)"
 ) > "%SLEEP_SCRIPT%"
 
 if exist "%SLEEP_SCRIPT%" (
@@ -250,6 +251,10 @@ powercfg /SETACVALUEINDEX SCHEME_CURRENT SUB_SLEEP RTCWAKE 1
 powercfg /SETDCVALUEINDEX SCHEME_CURRENT SUB_SLEEP RTCWAKE 1
 powercfg /SETACTIVE SCHEME_CURRENT
 echo   [OK] Wake timers enabled
+echo.
+echo Disabling hibernation to ensure proper sleep...
+powercfg /hibernate off
+echo   [OK] Hibernation disabled (sleep will work correctly now)
 echo.
 
 echo ========================================
