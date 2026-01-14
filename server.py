@@ -74,15 +74,14 @@ def create_ocr_provider():
     # Try PaddleOCR first (better for Japanese)
     try:
         from ocr import PaddleOCRProvider
-        # High accuracy configuration for better name recognition
-        # Uses PP-OCRv5 server models (more accurate than mobile models)
+        # Fast configuration: disable slow features for quick startup
+        # Models will load on first OCR request
         provider = PaddleOCRProvider(
             preprocess=True,
             lang='japan',
             use_doc_orientation_classify=False,  # Skip document orientation (slow)
             use_doc_unwarping=False,              # Skip unwarping (slow)
             use_textline_orientation=False,       # Skip textline orientation (slow)
-            use_mobile_models=False,              # Use server models for better accuracy
         )
         if provider.is_available():
             logger.info("OCR: PaddleOCR ready (models load on first use)")

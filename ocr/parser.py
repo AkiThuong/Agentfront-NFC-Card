@@ -48,7 +48,7 @@ class ZairyuCardParser:
         '英国', 'イギリス', 'フランス', 'ドイツ', 'イタリア', 'スペイン',
         'ロシア', 'ウクライナ', 'ポーランド',
         # Oceania
-        'オーストラリア', 'ニュージーランド',
+        'オーストラリア', 'オーストラリヤ', 'ニュージーランド',
         # Africa
         'ナイジェリア', 'ガーナ', 'エジプト',
     ]
@@ -145,9 +145,20 @@ class ZairyuCardParser:
         for i, line in enumerate(text_lines):
             logger.info(f"  Line {i}: {line}")
         
-        # Extract each field
+        # Extract card number first (needed for name extraction)
         parsed.update(self._extract_card_number(full_text, all_texts))
-        parsed.update(self._extract_name(text_lines, all_texts, parsed.get('card_number')))
+        
+        # Extract name using position-based detection (preferred for Zairyu cards)
+        # Falls back to text-based detection if position-based fails
+        name_result = self._extract_name_by_position(ocr_results, parsed.get('card_number'))
+        if name_result:
+            parsed.update(name_result)
+        else:
+            # Fallback to old method
+            logger.debug("Position-based name detection failed, using fallback")
+            parsed.update(self._extract_name(text_lines, all_texts, parsed.get('card_number')))
+        
+        # Extract other fields
         parsed.update(self._extract_dob_gender_nationality(text_lines, full_text))
         parsed.update(self._extract_period_and_expiry(text_lines, full_text))
         parsed.update(self._extract_status(text_lines, full_text))
@@ -257,6 +268,7 @@ class ZairyuCardParser:
                       card_number: Optional[str] = None) -> Dict[str, str]:
         """Extract name (Latin characters, typically near top)"""
         
+        # This is a fallback - prefer _extract_name_by_position when bbox data is available
         candidates = []
         
         # Check each line and individual text block
@@ -295,6 +307,151 @@ class ZairyuCardParser:
             return {"name": candidates[0][0]}
         
         return {}
+    
+    def _extract_name_by_position(self, ocr_results: List[Tuple], 
+                                   card_number: Optional[str] = None) -> Dict[str, str]:
+        """
+        Extract name using position-based detection for Zairyu cards.
+        
+        The name on a Zairyu card is:
+        - In the top-left area (within first 30% vertically)
+        - The first English-only text line (reading top to bottom)
+        - Left-aligned (card number is on the right)
+        - Above the DOB line
+        
+        Args:
+            ocr_results: List of (bbox, text, confidence) tuples
+            card_number: Card number to exclude from detection
+            
+        Returns:
+            Dict with 'name' key if found
+        """
+        if not ocr_results:
+            return {}
+        
+        # Step 1: Extract blocks with valid bboxes and calculate card boundaries
+        blocks_with_position = []
+        all_y_coords = []
+        all_x_coords = []
+        
+        for result in ocr_results:
+            bbox, text, confidence = result[0], result[1], result[2] if len(result) > 2 else 0.0
+            if not bbox or not text:
+                continue
+            
+            # Get Y and X coordinates from bbox
+            try:
+                if isinstance(bbox[0], (list, tuple)):
+                    # Format: [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+                    y_coord = float(bbox[0][1])  # Top-left Y
+                    x_coord = float(bbox[0][0])  # Top-left X
+                    # Also get right edge for width calculation
+                    x_right = float(bbox[1][0]) if len(bbox) > 1 else x_coord
+                else:
+                    # Format: [x1, y1, x2, y2, ...]
+                    y_coord = float(bbox[1])
+                    x_coord = float(bbox[0])
+                    x_right = float(bbox[2]) if len(bbox) > 2 else x_coord
+                
+                all_y_coords.append(y_coord)
+                all_x_coords.append(x_coord)
+                all_x_coords.append(x_right)
+                
+                blocks_with_position.append({
+                    'text': text.strip(),
+                    'y': y_coord,
+                    'x': x_coord,
+                    'x_right': x_right,
+                    'confidence': confidence
+                })
+            except (IndexError, TypeError, ValueError) as e:
+                logger.debug(f"Failed to parse bbox for text '{text}': {e}")
+                continue
+        
+        if not blocks_with_position or not all_y_coords:
+            logger.debug("No valid position data for name extraction")
+            return {}
+        
+        # Step 2: Calculate card boundaries
+        card_top = min(all_y_coords)
+        card_bottom = max(all_y_coords)
+        card_left = min(all_x_coords)
+        card_right = max(all_x_coords)
+        card_height = card_bottom - card_top
+        card_width = card_right - card_left
+        
+        if card_height <= 0 or card_width <= 0:
+            logger.debug("Invalid card dimensions")
+            return {}
+        
+        # Step 3: Define name zone (top 30% of card, left 70% to exclude card number area)
+        name_zone_bottom = card_top + card_height * 0.30
+        name_zone_right = card_left + card_width * 0.70  # Exclude right side where card# is
+        
+        logger.debug(f"Card bounds: top={card_top:.0f}, bottom={card_bottom:.0f}, "
+                    f"left={card_left:.0f}, right={card_right:.0f}")
+        logger.debug(f"Name zone: y < {name_zone_bottom:.0f}, x < {name_zone_right:.0f}")
+        
+        # Step 4: Filter blocks in name zone and find English-only candidates
+        name_candidates = []
+        
+        for block in blocks_with_position:
+            text = block['text']
+            y = block['y']
+            x = block['x']
+            
+            # Must be in top 30% of card
+            if y > name_zone_bottom:
+                continue
+            
+            # Must be on left side (not in card number area)
+            if x > name_zone_right:
+                continue
+            
+            # Skip if it's the card number
+            check_content = text.replace(" ", "").upper()
+            if card_number and check_content == card_number:
+                continue
+            
+            # Skip if contains numbers
+            if re.search(r'\d', check_content):
+                continue
+            
+            # Skip if contains Japanese characters
+            if re.search(r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]', check_content):
+                continue
+            
+            # Skip known non-name words
+            if any(skip in check_content for skip in self.SKIP_WORDS):
+                continue
+            
+            # Must be mostly letters (name-like)
+            letter_count = sum(1 for c in check_content if c.isalpha())
+            if letter_count < 3:
+                continue
+            if letter_count / max(len(check_content), 1) < 0.8:
+                continue
+            
+            # Valid candidate - store with Y position for sorting
+            name_candidates.append({
+                'text': text.upper(),
+                'y': y,
+                'length': len(text)
+            })
+            logger.debug(f"Name candidate: '{text}' at y={y:.0f}")
+        
+        if not name_candidates:
+            logger.debug("No name candidates found in position-based search")
+            return {}
+        
+        # Step 5: Sort by Y position (top-most first) and pick the first one
+        # If multiple at same Y level, prefer longer text
+        name_candidates.sort(key=lambda c: (c['y'], -c['length']))
+        
+        best_name = name_candidates[0]['text']
+        logger.info(f"Position-based name detection: '{best_name}'")
+        
+        return {"name": best_name}
     
     def _extract_dob_gender_nationality(self, text_lines: List[str], 
                                          full_text: str) -> Dict[str, str]:
