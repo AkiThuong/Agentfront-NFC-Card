@@ -29,19 +29,7 @@ echo Python 3.14 has compatibility issues with packages.
 echo Installing Python 3.13...
 echo.
 
-:: Try winget first
-winget --version >nul 2>&1
-if %errorLevel% equ 0 (
-    echo Using winget...
-    winget install Python.Python.3.13 --accept-source-agreements --accept-package-agreements --silent
-    if %errorLevel% equ 0 (
-        set NEED_RESTART=1
-        goto :check_restart
-    )
-    echo winget failed, trying direct download...
-)
-
-:: Download directly
+:: Skip winget (known certificate issues) - use direct download
 echo Downloading from python.org...
 set INSTALLER=%TEMP%\python-3.13-installer.exe
 curl -L -o "%INSTALLER%" "https://www.python.org/ftp/python/3.13.1/python-3.13.1-amd64.exe" 2>nul
