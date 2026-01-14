@@ -150,12 +150,17 @@ class PaddleOCRProvider(OCRProvider):
                 'use_textline_orientation': self.use_textline_orientation,
             }
             
-            # Use mobile models for faster loading (default)
-            # Mobile models are ~5x faster to load than server models
+            # Choose between mobile (fast) or server (accurate) models
             if self.use_mobile_models:
+                # Mobile models: ~5x faster to load, good for quick reads
                 ocr_kwargs['text_detection_model_name'] = 'PP-OCRv5_mobile_det'
                 ocr_kwargs['text_recognition_model_name'] = 'PP-OCRv5_mobile_rec'
                 logger.info("Using mobile models for faster loading")
+            else:
+                # Server models: higher accuracy, better for name recognition
+                ocr_kwargs['text_detection_model_name'] = 'PP-OCRv5_server_det'
+                ocr_kwargs['text_recognition_model_name'] = 'PP-OCRv5_server_rec'
+                logger.info("Using server models for better accuracy")
             
             self._ocr = PaddleOCR(**ocr_kwargs)
             
