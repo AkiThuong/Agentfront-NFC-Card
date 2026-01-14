@@ -76,12 +76,18 @@ class ZairyuCardParser:
     
     # Words to skip when detecting names (expanded)
     SKIP_WORDS = [
+        # Card labels and headers
         'VALIDITY', 'PERIOD', 'CARD', 'FERICD', 'STUDENT', 'SRUDENT',
         'RESIDENCE', 'STATUS', 'PERMIT', 'JAPAN', 'IMMIGRATION',
         'MINISTRY', 'JUSTICE', 'IMMIGRATION', 'SERVICES', 'AGENCY',
         'DATE', 'BIRTH', 'SEX', 'NATIONALITY', 'ADDRESS',
         'PERIOD', 'STAY', 'EXPIRATION', 'WORK', 'PERMISSION',
         'THIS', 'THE', 'OF', 'FOR', 'AND', 'IS', 'TO',
+        # Residence status labels (特定活動 = Designated Activities)
+        'DESIGNATED', 'ACTIVITIES', 'ACTIVITY',
+        # Other common card text
+        'NAME', 'NUMBER', 'ISSUE', 'ISSUED', 'EXPIRED',
+        'HOLDER', 'BEARER', 'PHOTO', 'SIGNATURE',
     ]
     
     def __init__(self, line_threshold: int = 25):
@@ -395,6 +401,16 @@ class ZairyuCardParser:
         # Step 4: Filter blocks in name zone and find English-only candidates
         name_candidates = []
         
+        # Log all blocks for debugging
+        logger.info("Position-based name detection - analyzing blocks:")
+        for block in blocks_with_position:
+            text = block['text']
+            y = block['y']
+            x = block['x']
+            in_y_zone = y <= name_zone_bottom
+            in_x_zone = x <= name_zone_right
+            logger.debug(f"  '{text}' at y={y:.0f}, x={x:.0f} | in_y_zone={in_y_zone}, in_x_zone={in_x_zone}")
+        
         for block in blocks_with_position:
             text = block['text']
             y = block['y']
@@ -402,10 +418,12 @@ class ZairyuCardParser:
             
             # Must be in top 30% of card
             if y > name_zone_bottom:
+                logger.debug(f"  SKIP '{text}': y={y:.0f} > zone_bottom={name_zone_bottom:.0f}")
                 continue
             
             # Must be on left side (not in card number area)
             if x > name_zone_right:
+                logger.debug(f"  SKIP '{text}': x={x:.0f} > zone_right={name_zone_right:.0f}")
                 continue
             
             # Skip if it's the card number
@@ -423,6 +441,7 @@ class ZairyuCardParser:
             
             # Skip known non-name words
             if any(skip in check_content for skip in self.SKIP_WORDS):
+                logger.debug(f"  SKIP '{text}': contains skip word")
                 continue
             
             # Must be mostly letters (name-like)
