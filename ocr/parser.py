@@ -74,20 +74,29 @@ class ZairyuCardParser:
         'Student', 'student',
     ]
     
-    # Words to skip when detecting names (expanded)
+    # Words to skip when detecting names (EXACT MATCH only)
+    # These are matched exactly against individual words in the text
     SKIP_WORDS = [
         # Card labels and headers
         'VALIDITY', 'PERIOD', 'CARD', 'FERICD', 'STUDENT', 'SRUDENT',
         'RESIDENCE', 'STATUS', 'PERMIT', 'JAPAN', 'IMMIGRATION',
-        'MINISTRY', 'JUSTICE', 'IMMIGRATION', 'SERVICES', 'AGENCY',
+        'MINISTRY', 'JUSTICE', 'SERVICES', 'AGENCY',
         'DATE', 'BIRTH', 'SEX', 'NATIONALITY', 'ADDRESS',
-        'PERIOD', 'STAY', 'EXPIRATION', 'WORK', 'PERMISSION',
+        'STAY', 'EXPIRATION', 'WORK', 'PERMISSION',
         'THIS', 'THE', 'OF', 'FOR', 'AND', 'IS', 'TO',
-        # Residence status labels (特定活動 = Designated Activities)
+        # Residence status labels
         'DESIGNATED', 'ACTIVITIES', 'ACTIVITY',
-        # Other common card text
+        # Card text labels
         'NAME', 'NUMBER', 'ISSUE', 'ISSUED', 'EXPIRED',
         'HOLDER', 'BEARER', 'PHOTO', 'SIGNATURE',
+    ]
+    
+    # Full phrases to skip (checked as substrings)
+    SKIP_PHRASES = [
+        'PERIOD OF VALIDITY',
+        'VALIDITY OF THIS CARD',
+        'DATE OF BIRTH',
+        'STATUS OF RESIDENCE',
     ]
     
     def __init__(self, line_threshold: int = 25):
@@ -140,14 +149,15 @@ class ZairyuCardParser:
             return parsed
         
         # Debug: Log raw OCR results structure
-        logger.info(f"=== PARSING {len(ocr_results)} OCR RESULTS ===")
+        logger.warning(f"=== PARSING {len(ocr_results)} OCR RESULTS ===")
         for i, r in enumerate(ocr_results[:5]):  # Log first 5
             bbox = r[0] if len(r) > 0 else None
             text = r[1] if len(r) > 1 else None
             conf = r[2] if len(r) > 2 else None
-            logger.info(f"  [{i}] text='{text}', bbox={bbox}, conf={conf}")
+            bbox_info = f"bbox={bbox}" if bbox else "NO BBOX"
+            logger.warning(f"  [{i}] text='{text}', {bbox_info}")
         if len(ocr_results) > 5:
-            logger.info(f"  ... and {len(ocr_results) - 5} more")
+            logger.warning(f"  ... and {len(ocr_results) - 5} more")
         
         # Get all text blocks
         all_texts = [r[1] for r in ocr_results if r[1]]
@@ -163,11 +173,11 @@ class ZairyuCardParser:
         
         # Extract card number first (needed for name extraction)
         parsed.update(self._extract_card_number(full_text, all_texts))
-        logger.info(f"Card number extracted: {parsed.get('card_number', 'NOT FOUND')}")
+        logger.warning(f"Card number extracted: {parsed.get('card_number', 'NOT FOUND')}")
         
         # Extract name using position-based detection (preferred for Zairyu cards)
         # Falls back to text-based detection if position-based fails
-        logger.info("=== ATTEMPTING POSITION-BASED NAME DETECTION ===")
+        logger.warning("=== ATTEMPTING POSITION-BASED NAME DETECTION ===")
         name_result = self._extract_name_by_position(ocr_results, parsed.get('card_number'))
         if name_result:
             logger.info(f"Position-based name: {name_result.get('name')}")
@@ -315,9 +325,16 @@ class ZairyuCardParser:
                     continue
                 
                 # Skip known non-name words
-                check_upper = check_content.upper()
-                if any(skip in check_upper for skip in self.SKIP_WORDS):
-                    continue
+                # Single words: exact match; Multi-word: only skip phrases
+                text_upper = clean_text.upper().strip()
+                text_word_list = text_upper.split()
+                
+                if len(text_word_list) == 1:
+                    if text_upper in self.SKIP_WORDS:
+                        continue
+                else:
+                    if any(phrase in text_upper for phrase in self.SKIP_PHRASES):
+                        continue
                 
                 # Check if looks like a name (mostly letters)
                 letter_count = sum(1 for c in check_content if c.isalpha())
@@ -424,14 +441,15 @@ class ZairyuCardParser:
         name_candidates = []
         
         # Log all blocks for debugging
-        logger.info("Position-based name detection - analyzing blocks:")
+        logger.warning(f"Position-based: analyzing {len(blocks_with_position)} blocks")
+        logger.warning(f"  Name zone: y < {name_zone_bottom:.0f}, x < {name_zone_right:.0f}")
         for block in blocks_with_position:
             text = block['text']
             y = block['y']
             x = block['x']
             in_y_zone = y <= name_zone_bottom
             in_x_zone = x <= name_zone_right
-            logger.debug(f"  '{text}' at y={y:.0f}, x={x:.0f} | in_y_zone={in_y_zone}, in_x_zone={in_x_zone}")
+            logger.warning(f"  '{text[:30]}' y={y:.0f}, x={x:.0f} | y_ok={in_y_zone}, x_ok={in_x_zone}")
         
         for block in blocks_with_position:
             text = block['text']
@@ -440,12 +458,10 @@ class ZairyuCardParser:
             
             # Must be in top 30% of card
             if y > name_zone_bottom:
-                logger.debug(f"  SKIP '{text}': y={y:.0f} > zone_bottom={name_zone_bottom:.0f}")
                 continue
             
             # Must be on left side (not in card number area)
             if x > name_zone_right:
-                logger.debug(f"  SKIP '{text}': x={x:.0f} > zone_right={name_zone_right:.0f}")
                 continue
             
             # Skip if it's the card number
@@ -462,18 +478,31 @@ class ZairyuCardParser:
                 continue
             
             # Skip known non-name words
-            if any(skip in check_content for skip in self.SKIP_WORDS):
-                logger.debug(f"  SKIP '{text}': contains skip word")
-                continue
+            # For single words: exact match against skip words
+            # For multi-word texts: only skip if it matches a skip phrase
+            # This allows names like "MONICA STAY" to pass while blocking "STAY" alone
+            text_upper = text.upper().strip()
+            text_words = text_upper.split()
+            
+            if len(text_words) == 1:
+                # Single word - exact match
+                if text_upper in self.SKIP_WORDS:
+                    logger.warning(f"    SKIP '{text}': exact skip word")
+                    continue
+            else:
+                # Multi-word - only skip if matches a known phrase
+                if any(phrase in text_upper for phrase in self.SKIP_PHRASES):
+                    logger.warning(f"    SKIP '{text}': matches skip phrase")
+                    continue
             
             # Must be mostly letters (name-like)
             letter_count = sum(1 for c in check_content if c.isalpha())
             if letter_count < 3:
-                logger.debug(f"  SKIP '{text}': letter_count={letter_count} < 3")
+                logger.warning(f"    SKIP '{text}': too short")
                 continue
             letter_ratio = letter_count / max(len(check_content), 1)
             if letter_ratio < 0.8:
-                logger.debug(f"  SKIP '{text}': letter_ratio={letter_ratio:.2f} < 0.8")
+                logger.warning(f"    SKIP '{text}': low letter ratio")
                 continue
             
             # Valid candidate - store with Y position for sorting
@@ -482,7 +511,7 @@ class ZairyuCardParser:
                 'y': y,
                 'length': len(text)
             })
-            logger.info(f"  ✓ CANDIDATE: '{text}' at y={y:.0f}, x={x:.0f}")
+            logger.warning(f"  >>> CANDIDATE: '{text}' at y={y:.0f}, x={x:.0f}")
         
         if not name_candidates:
             logger.warning("No name candidates found in position-based search!")

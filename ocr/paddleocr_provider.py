@@ -329,6 +329,16 @@ class PaddleOCRProvider(OCRProvider):
                         text_blocks.extend(self._parse_legacy_format(page_result))
                         continue
                     
+                    # Debug: Log what we got from PaddleOCR
+                    logger.warning(f"=== PADDLEOCR RAW DATA ===")
+                    logger.warning(f"  rec_texts count: {len(rec_texts)}")
+                    logger.warning(f"  rec_scores count: {len(rec_scores)}")
+                    logger.warning(f"  rec_polys count: {len(rec_polys)}")
+                    if rec_polys and len(rec_polys) > 0:
+                        logger.warning(f"  First bbox sample: {rec_polys[0]}")
+                    else:
+                        logger.warning(f"  rec_polys is EMPTY!")
+                    
                     # Process rec_texts format
                     for i, text in enumerate(rec_texts):
                         if not text or len(str(text).strip()) == 0:
@@ -345,7 +355,9 @@ class PaddleOCRProvider(OCRProvider):
                             confidence=confidence,
                             bbox=bbox_list
                         ))
-                        logger.debug(f"OCR: '{text}' (conf: {confidence:.3f})")
+                        # Log first few with bbox for debugging
+                        if i < 3:
+                            logger.warning(f"  [{i}] '{text}' bbox={bbox_list}")
             
             logger.info(f"PaddleOCR extracted {len(text_blocks)} text regions")
             

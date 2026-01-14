@@ -1034,16 +1034,27 @@
             
             // OCR raw text (collapsible debug section)
             if (data.ocr_result && data.ocr_result.raw_text && data.ocr_result.raw_text.length > 0) {
+                // Check if any bbox data exists
+                const hasBboxData = data.ocr_result.raw_text.some(r => r.bbox && r.bbox.length > 0);
+                const bboxStatus = hasBboxData ? '✅ BBOX OK' : '❌ NO BBOX';
+                
                 html += `
                     <details style="margin-top: 10px;">
-                        <summary style="cursor: pointer; color: #059669; font-size: 12px;">📝 OCR全テキスト (${data.ocr_result.raw_text.length} regions)</summary>
+                        <summary style="cursor: pointer; color: #059669; font-size: 12px;">
+                            📝 OCR全テキスト (${data.ocr_result.raw_text.length} regions) 
+                            <span style="color: ${hasBboxData ? '#059669' : '#ef4444'};">${bboxStatus}</span>
+                        </summary>
                         <div style="margin-top: 8px; font-size: 11px; background: #f0fdf4; padding: 10px; border-radius: 6px;">
-                            ${data.ocr_result.raw_text.map(r => 
-                                `<div style="margin-bottom: 4px; padding: 4px; background: white; border-radius: 4px;">
+                            ${data.ocr_result.raw_text.map(r => {
+                                const hasBbox = r.bbox && r.bbox.length > 0;
+                                const bboxInfo = hasBbox ? `y=${Math.round(r.bbox[0][1])}, x=${Math.round(r.bbox[0][0])}` : 'NO BBOX';
+                                const bboxColor = hasBbox ? '#059669' : '#ef4444';
+                                return `<div style="margin-bottom: 4px; padding: 4px; background: white; border-radius: 4px;">
                                     <span style="color: #059669; font-weight: 600;">"${r.text}"</span>
                                     <span style="color: #9ca3af; font-size: 10px; margin-left: 8px;">conf: ${(r.confidence * 100).toFixed(0)}%</span>
-                                </div>`
-                            ).join('')}
+                                    <span style="color: ${bboxColor}; font-size: 10px; margin-left: 8px;">[${bboxInfo}]</span>
+                                </div>`;
+                            }).join('')}
                         </div>
                     </details>
                 `;
@@ -1451,12 +1462,16 @@
                                 📝 OCR全テキスト (${ocr.raw_text.length} regions)
                             </summary>
                             <div style="margin-top: 8px; font-size: 11px; background: #f0fdf4; padding: 10px; border-radius: 6px; max-height: 200px; overflow-y: auto;">
-                                ${ocr.raw_text.map(r => 
-                                    `<div style="margin-bottom: 4px; padding: 4px; background: white; border-radius: 4px;">
+                                ${ocr.raw_text.map(r => {
+                                    const hasBbox = r.bbox && r.bbox.length > 0;
+                                    const bboxInfo = hasBbox ? `y=${Math.round(r.bbox[0][1])}, x=${Math.round(r.bbox[0][0])}` : 'NO BBOX';
+                                    const bboxColor = hasBbox ? '#059669' : '#ef4444';
+                                    return `<div style="margin-bottom: 4px; padding: 4px; background: white; border-radius: 4px;">
                                         <span style="color: #059669; font-weight: 600;">"${r.text}"</span>
                                         <span style="color: #9ca3af; font-size: 10px; margin-left: 8px;">conf: ${(r.confidence * 100).toFixed(0)}%</span>
-                                    </div>`
-                                ).join('')}
+                                        <span style="color: ${bboxColor}; font-size: 10px; margin-left: 8px;">[${bboxInfo}]</span>
+                                    </div>`;
+                                }).join('')}
                             </div>
                         </details>
                     `;
