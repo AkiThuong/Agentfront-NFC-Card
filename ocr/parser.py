@@ -139,6 +139,16 @@ class ZairyuCardParser:
         if not ocr_results:
             return parsed
         
+        # Debug: Log raw OCR results structure
+        logger.info(f"=== PARSING {len(ocr_results)} OCR RESULTS ===")
+        for i, r in enumerate(ocr_results[:5]):  # Log first 5
+            bbox = r[0] if len(r) > 0 else None
+            text = r[1] if len(r) > 1 else None
+            conf = r[2] if len(r) > 2 else None
+            logger.info(f"  [{i}] text='{text}', bbox={bbox}, conf={conf}")
+        if len(ocr_results) > 5:
+            logger.info(f"  ... and {len(ocr_results) - 5} more")
+        
         # Get all text blocks
         all_texts = [r[1] for r in ocr_results if r[1]]
         full_text = " ".join(all_texts)
@@ -153,16 +163,24 @@ class ZairyuCardParser:
         
         # Extract card number first (needed for name extraction)
         parsed.update(self._extract_card_number(full_text, all_texts))
+        logger.info(f"Card number extracted: {parsed.get('card_number', 'NOT FOUND')}")
         
         # Extract name using position-based detection (preferred for Zairyu cards)
         # Falls back to text-based detection if position-based fails
+        logger.info("=== ATTEMPTING POSITION-BASED NAME DETECTION ===")
         name_result = self._extract_name_by_position(ocr_results, parsed.get('card_number'))
         if name_result:
+            logger.info(f"Position-based name: {name_result.get('name')}")
             parsed.update(name_result)
         else:
             # Fallback to old method
-            logger.debug("Position-based name detection failed, using fallback")
-            parsed.update(self._extract_name(text_lines, all_texts, parsed.get('card_number')))
+            logger.info("Position-based failed, trying text-based fallback...")
+            name_result = self._extract_name(text_lines, all_texts, parsed.get('card_number'))
+            if name_result:
+                logger.info(f"Text-based name: {name_result.get('name')}")
+                parsed.update(name_result)
+            else:
+                logger.warning("NAME NOT FOUND by any method!")
         
         # Extract other fields
         parsed.update(self._extract_dob_gender_nationality(text_lines, full_text))
@@ -275,6 +293,7 @@ class ZairyuCardParser:
         """Extract name (Latin characters, typically near top)"""
         
         # This is a fallback - prefer _extract_name_by_position when bbox data is available
+        logger.info("=== TEXT-BASED NAME DETECTION (FALLBACK) ===")
         candidates = []
         
         # Check each line and individual text block
@@ -306,12 +325,15 @@ class ZairyuCardParser:
                     # Score by length (longer names are more likely correct)
                     score = len(clean_text)
                     candidates.append((clean_text.upper(), score))
+                    logger.info(f"  ✓ TEXT CANDIDATE: '{clean_text}' (score={score})")
         
         if candidates:
             # Return the best candidate (longest)
             candidates.sort(key=lambda x: x[1], reverse=True)
+            logger.info(f"  Selected: '{candidates[0][0]}' from {len(candidates)} candidates")
             return {"name": candidates[0][0]}
         
+        logger.warning("  No text-based name candidates found!")
         return {}
     
     def _extract_name_by_position(self, ocr_results: List[Tuple], 
@@ -375,7 +397,7 @@ class ZairyuCardParser:
                 continue
         
         if not blocks_with_position or not all_y_coords:
-            logger.debug("No valid position data for name extraction")
+            logger.warning(f"No valid position data! blocks={len(blocks_with_position)}, y_coords={len(all_y_coords)}")
             return {}
         
         # Step 2: Calculate card boundaries
@@ -447,8 +469,11 @@ class ZairyuCardParser:
             # Must be mostly letters (name-like)
             letter_count = sum(1 for c in check_content if c.isalpha())
             if letter_count < 3:
+                logger.debug(f"  SKIP '{text}': letter_count={letter_count} < 3")
                 continue
-            if letter_count / max(len(check_content), 1) < 0.8:
+            letter_ratio = letter_count / max(len(check_content), 1)
+            if letter_ratio < 0.8:
+                logger.debug(f"  SKIP '{text}': letter_ratio={letter_ratio:.2f} < 0.8")
                 continue
             
             # Valid candidate - store with Y position for sorting
@@ -457,10 +482,11 @@ class ZairyuCardParser:
                 'y': y,
                 'length': len(text)
             })
-            logger.debug(f"Name candidate: '{text}' at y={y:.0f}")
+            logger.info(f"  ✓ CANDIDATE: '{text}' at y={y:.0f}, x={x:.0f}")
         
         if not name_candidates:
-            logger.debug("No name candidates found in position-based search")
+            logger.warning("No name candidates found in position-based search!")
+            logger.info(f"  Total blocks analyzed: {len(blocks_with_position)}")
             return {}
         
         # Step 5: Sort by Y position (top-most first) and pick the first one
