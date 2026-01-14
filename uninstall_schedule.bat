@@ -65,6 +65,22 @@ if %errorLevel% equ 0 (
     echo   [SKIP] Not found
 )
 
+echo   Removing AgentFront_Test_SleepPC...
+schtasks /delete /tn "AgentFront_Test_SleepPC" /f >nul 2>&1
+if %errorLevel% equ 0 (
+    echo   [OK] Removed
+) else (
+    echo   [SKIP] Not found
+)
+
+echo   Removing AgentFront_Test_WakeRestartPC...
+schtasks /delete /tn "AgentFront_Test_WakeRestartPC" /f >nul 2>&1
+if %errorLevel% equ 0 (
+    echo   [OK] Removed
+) else (
+    echo   [SKIP] Not found
+)
+
 echo.
 
 :: ========================================
