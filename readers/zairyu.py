@@ -783,6 +783,20 @@ class ZairyuCardReader:
         
         result["authenticated"] = True
         
+        # Prepare photo save directory
+        photo_save_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "photo", "zairyuu")
+        try:
+            os.makedirs(photo_save_dir, exist_ok=True)
+            logger.info(f"Photo save directory: {photo_save_dir}")
+        except Exception as e:
+            logger.warning(f"Could not create photo directory: {e}")
+            photo_save_dir = None
+        
+        # Generate timestamp for unique filenames
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Use masked card number for filename (privacy)
+        card_id = f"{card_number[:4]}XXXX{card_number[-2:]}"
+        
         # Read front image
         front_image = self.read_front_image()
         if front_image:
@@ -791,6 +805,18 @@ class ZairyuCardReader:
             result["front_image_size"] = len(front_image_jpeg)
             result["front_image_base64"] = base64.b64encode(front_image_jpeg).decode('ascii')
             result["front_image_type"] = "image/jpeg"
+            
+            # Save front image to disk
+            if photo_save_dir:
+                try:
+                    front_filename = f"{card_id}_{timestamp_str}_front.jpg"
+                    front_path = os.path.join(photo_save_dir, front_filename)
+                    with open(front_path, 'wb') as f:
+                        f.write(front_image_jpeg)
+                    result["front_image_saved"] = front_path
+                    logger.info(f"Saved front image: {front_path}")
+                except Exception as e:
+                    logger.warning(f"Could not save front image: {e}")
         
         # Read photo
         photo = self.read_photo()
@@ -800,6 +826,18 @@ class ZairyuCardReader:
             result["photo_size"] = len(photo_jpeg)
             result["photo_base64"] = base64.b64encode(photo_jpeg).decode('ascii')
             result["photo_type"] = "image/jpeg"
+            
+            # Save face photo to disk
+            if photo_save_dir:
+                try:
+                    photo_filename = f"{card_id}_{timestamp_str}_photo.jpg"
+                    photo_path = os.path.join(photo_save_dir, photo_filename)
+                    with open(photo_path, 'wb') as f:
+                        f.write(photo_jpeg)
+                    result["photo_saved"] = photo_path
+                    logger.info(f"Saved face photo: {photo_path}")
+                except Exception as e:
+                    logger.warning(f"Could not save face photo: {e}")
         
         # OCR: Extract personal info from front card image
         if front_image and self.ocr_provider:
