@@ -505,10 +505,11 @@ class ZairyuCardParser:
                 logger.warning(f"    SKIP '{text}': low letter ratio")
                 continue
             
-            # Valid candidate - store with Y position for sorting
+            # Valid candidate - store with Y and X position for sorting and merging
             name_candidates.append({
                 'text': text.upper(),
                 'y': y,
+                'x': x,
                 'length': len(text)
             })
             logger.warning(f"  >>> CANDIDATE: '{text}' at y={y:.0f}, x={x:.0f}")
@@ -518,12 +519,47 @@ class ZairyuCardParser:
             logger.info(f"  Total blocks analyzed: {len(blocks_with_position)}")
             return {}
         
-        # Step 5: Sort by Y position (top-most first) and pick the first one
-        # If multiple at same Y level, prefer longer text
-        name_candidates.sort(key=lambda c: (c['y'], -c['length']))
+        # Step 5: Group candidates by similar Y position (same line) and merge them
+        # This handles cases where first name and last name are detected as separate blocks
+        name_candidates.sort(key=lambda c: (c['y'], c['x']))
         
-        best_name = name_candidates[0]['text']
-        logger.info(f"Position-based name detection: '{best_name}'")
+        # Group candidates by Y position (within line threshold)
+        line_groups = []
+        current_group = [name_candidates[0]]
+        current_y = name_candidates[0]['y']
+        
+        for candidate in name_candidates[1:]:
+            # If Y difference is within threshold, same line
+            if abs(candidate['y'] - current_y) <= self.line_grouping_threshold:
+                current_group.append(candidate)
+            else:
+                # Start new line group
+                line_groups.append(current_group)
+                current_group = [candidate]
+                current_y = candidate['y']
+        
+        # Don't forget the last group
+        if current_group:
+            line_groups.append(current_group)
+        
+        # Log grouped candidates for debugging
+        logger.warning(f"  Name groups: {len(line_groups)} line(s)")
+        for i, group in enumerate(line_groups):
+            texts = [c['text'] for c in group]
+            logger.warning(f"    Line {i}: {texts}")
+        
+        # Take the first line group (topmost) and merge all text blocks
+        # Sort by X position to get correct left-to-right order
+        first_line = line_groups[0]
+        first_line.sort(key=lambda c: c['x'])
+        
+        # Merge all text blocks on this line into the full name
+        best_name = " ".join(c['text'] for c in first_line)
+        
+        # Clean up multiple spaces
+        best_name = " ".join(best_name.split())
+        
+        logger.info(f"Position-based name detection: '{best_name}' (merged from {len(first_line)} blocks)")
         
         return {"name": best_name}
     
