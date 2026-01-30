@@ -194,6 +194,14 @@ class ZairyuCardParser:
         
         # Extract other fields
         parsed.update(self._extract_dob_gender_nationality(text_lines, full_text))
+        
+        # If nationality not found by text-based method, try position-based
+        if "nationality" not in parsed:
+            logger.warning("=== ATTEMPTING POSITION-BASED NATIONALITY DETECTION ===")
+            nationality_result = self._extract_nationality_by_position(ocr_results)
+            if nationality_result:
+                parsed.update(nationality_result)
+        
         parsed.update(self._extract_period_and_expiry(text_lines, full_text))
         parsed.update(self._extract_status(text_lines, full_text))
         parsed.update(self._extract_address(text_lines, full_text))
@@ -563,6 +571,106 @@ class ZairyuCardParser:
         
         return {"name": best_name}
     
+    def _extract_nationality_by_position(self, ocr_results: List[Tuple]) -> Dict[str, str]:
+        """
+        Extract nationality using position-based detection for Zairyu cards.
+        
+        The nationality on a Zairyu card is:
+        - In the middle area (20-50% vertically from top)
+        - Usually on the left side
+        - Near the DOB/gender line
+        - Contains katakana (Japanese) country names
+        
+        Args:
+            ocr_results: List of (bbox, text, confidence) tuples
+            
+        Returns:
+            Dict with 'nationality' key if found
+        """
+        if not ocr_results:
+            return {}
+        
+        # Step 1: Extract blocks with valid bboxes and calculate card boundaries
+        blocks_with_position = []
+        all_y_coords = []
+        all_x_coords = []
+        
+        for result in ocr_results:
+            bbox, text, confidence = result[0], result[1], result[2] if len(result) > 2 else 0.0
+            if not bbox or not text:
+                continue
+            
+            # Get Y and X coordinates from bbox
+            try:
+                if isinstance(bbox[0], (list, tuple)):
+                    y_coord = float(bbox[0][1])
+                    x_coord = float(bbox[0][0])
+                    x_right = float(bbox[1][0]) if len(bbox) > 1 else x_coord
+                else:
+                    y_coord = float(bbox[1])
+                    x_coord = float(bbox[0])
+                    x_right = float(bbox[2]) if len(bbox) > 2 else x_coord
+                
+                all_y_coords.append(y_coord)
+                all_x_coords.append(x_coord)
+                all_x_coords.append(x_right)
+                
+                blocks_with_position.append({
+                    'text': text.strip(),
+                    'y': y_coord,
+                    'x': x_coord,
+                    'x_right': x_right,
+                    'confidence': confidence
+                })
+            except (IndexError, TypeError, ValueError):
+                continue
+        
+        if not blocks_with_position or not all_y_coords:
+            return {}
+        
+        # Step 2: Calculate card boundaries
+        card_top = min(all_y_coords)
+        card_bottom = max(all_y_coords)
+        card_left = min(all_x_coords)
+        card_right = max(all_x_coords)
+        card_height = card_bottom - card_top
+        card_width = card_right - card_left
+        
+        if card_height <= 0 or card_width <= 0:
+            return {}
+        
+        # Step 3: Define nationality zone (15-55% vertically, left 80% of card)
+        # Nationality is typically below the name but in the upper-middle area
+        nationality_zone_top = card_top + card_height * 0.15
+        nationality_zone_bottom = card_top + card_height * 0.55
+        nationality_zone_right = card_left + card_width * 0.80
+        
+        logger.warning(f"  Nationality zone: y {nationality_zone_top:.0f}-{nationality_zone_bottom:.0f}, x < {nationality_zone_right:.0f}")
+        
+        # Step 4: Search for nationality in the zone
+        for block in blocks_with_position:
+            text = block['text']
+            y = block['y']
+            x = block['x']
+            
+            # Check if in nationality zone
+            if y < nationality_zone_top or y > nationality_zone_bottom:
+                continue
+            if x > nationality_zone_right:
+                continue
+            
+            # Check against known nationalities
+            for nationality in self.NATIONALITIES:
+                if nationality in text:
+                    logger.warning(f"  Position-based nationality found: '{nationality}' in '{text}' at y={y:.0f}, x={x:.0f}")
+                    return {"nationality": nationality}
+            
+            # Also log what we're checking for debugging
+            logger.warning(f"  Checking block in zone: '{text}' at y={y:.0f}, x={x:.0f}")
+        
+        logger.warning("  Position-based nationality: NOT FOUND")
+        return {}
+    
     def _extract_dob_gender_nationality(self, text_lines: List[str], 
                                          full_text: str) -> Dict[str, str]:
         """Extract date of birth, gender, and nationality"""
@@ -571,47 +679,83 @@ class ZairyuCardParser:
         # Date pattern: YYYY年MM月DD日
         dob_pattern = r'(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*[日月]'
         
+        logger.warning("=== EXTRACTING DOB/GENDER/NATIONALITY ===")
+        logger.warning(f"  Searching in {len(text_lines)} lines")
+        
         # First, find DOB line
-        for line in text_lines:
+        for i, line in enumerate(text_lines):
             dob_match = re.search(dob_pattern, line)
             if dob_match:
                 year = dob_match.group(1)
                 month = dob_match.group(2).zfill(2)
                 day = dob_match.group(3).zfill(2)
                 result["date_of_birth"] = f"{year}-{month}-{day}"
+                logger.warning(f"  DOB found in line {i}: {result['date_of_birth']}")
                 
                 # Extract gender from same line or nearby
                 if '女' in line or 'F.' in line or 'F .' in line:
                     result["gender"] = "女"
                     result["gender_en"] = "Female"
+                    logger.warning(f"  Gender found in DOB line: Female")
                 elif '男' in line or 'M.' in line or 'M .' in line:
                     result["gender"] = "男"
                     result["gender_en"] = "Male"
+                    logger.warning(f"  Gender found in DOB line: Male")
                 
                 # Extract nationality from same line
                 for nationality in self.NATIONALITIES:
                     if nationality in line:
                         result["nationality"] = nationality
+                        logger.warning(f"  Nationality found in DOB line: {nationality}")
                         break
+                
+                # If nationality not in DOB line, check adjacent lines (DOB line ± 1)
+                if "nationality" not in result:
+                    logger.warning(f"  Nationality NOT in DOB line, checking adjacent lines...")
+                    # Check line before DOB (if exists)
+                    if i > 0:
+                        prev_line = text_lines[i - 1]
+                        for nationality in self.NATIONALITIES:
+                            if nationality in prev_line:
+                                result["nationality"] = nationality
+                                logger.warning(f"  Nationality found in line {i-1} (before DOB): {nationality}")
+                                break
+                    
+                    # Check line after DOB (if exists)
+                    if "nationality" not in result and i + 1 < len(text_lines):
+                        next_line = text_lines[i + 1]
+                        for nationality in self.NATIONALITIES:
+                            if nationality in next_line:
+                                result["nationality"] = nationality
+                                logger.warning(f"  Nationality found in line {i+1} (after DOB): {nationality}")
+                                break
                 
                 break
         
-        # If nationality not found in DOB line, search all text
+        # If nationality not found in DOB line or adjacent, search all text
         if "nationality" not in result:
+            logger.warning(f"  Nationality NOT found near DOB, searching full text...")
+            logger.warning(f"  Full text preview: {full_text[:200]}...")
             for nationality in self.NATIONALITIES:
                 if nationality in full_text:
                     result["nationality"] = nationality
+                    logger.warning(f"  Nationality found in full text: {nationality}")
                     break
+            if "nationality" not in result:
+                logger.warning(f"  Nationality NOT FOUND anywhere!")
         
         # If gender not found, search all text
         if "gender" not in result:
             if '女' in full_text:
                 result["gender"] = "女"
                 result["gender_en"] = "Female"
+                logger.warning(f"  Gender found in full text: Female")
             elif '男' in full_text:
                 result["gender"] = "男"
                 result["gender_en"] = "Male"
+                logger.warning(f"  Gender found in full text: Male")
         
+        logger.warning(f"  Final DOB/Gender/Nationality result: {result}")
         return result
     
     def _extract_period_and_expiry(self, text_lines: List[str], 
