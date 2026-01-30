@@ -54,22 +54,31 @@ class ZairyuCardReader:
     EF_DF2_ENDORSEMENT_3 = 0x04
     EF_DF3_SIGNATURE = 0x02
     
-    def __init__(self, connection, ocr_provider=None):
+    # Critical fields that should be present in a valid OCR result
+    CRITICAL_FIELDS = ['name', 'nationality', 'date_of_birth']
+    
+    def __init__(self, connection, ocr_provider=None, fallback_ocr_provider=None):
         """
         Initialize Zairyu card reader.
         
         Args:
             connection: Smart card connection
-            ocr_provider: Optional OCR provider for text extraction from images
+            ocr_provider: Primary OCR provider for text extraction from images
+            fallback_ocr_provider: Fallback OCR provider when primary misses fields
         """
         self.connection = connection
         self.ks_enc = None
         self.authenticated = False
         self.ocr_provider = ocr_provider
+        self.fallback_ocr_provider = fallback_ocr_provider
     
     def set_ocr_provider(self, provider):
         """Set OCR provider for text extraction"""
         self.ocr_provider = provider
+    
+    def set_fallback_ocr_provider(self, provider):
+        """Set fallback OCR provider for when primary misses fields"""
+        self.fallback_ocr_provider = provider
     
     def send_apdu(self, apdu: List[int]) -> tuple:
         """Send APDU and return response"""
@@ -718,33 +727,77 @@ class ZairyuCardReader:
         return info
     
     def extract_text_from_image(self, image_data: bytes) -> Dict[str, Any]:
-        """Extract text from card image using OCR provider."""
+        """
+        Extract text from card image using OCR provider.
+        
+        Uses fallback OCR when critical fields are missing from primary OCR.
+        """
         if not self.ocr_provider:
             return {
                 "ocr_available": False,
                 "error": "No OCR provider configured"
             }
         
-        result = self.ocr_provider.process_image(image_data)
+        # Import parser here to avoid circular imports
+        from ocr.parser import ZairyuCardParser
+        parser = ZairyuCardParser()
         
-        if result.success:
-            # Import parser here to avoid circular imports
-            from ocr.parser import ZairyuCardParser
-            parser = ZairyuCardParser()
-            parsed_fields = parser.parse(result)
-            
-            return {
-                "ocr_available": True,
-                "ocr_success": True,
-                "raw_text": result.raw_text,
-                "parsed_fields": parsed_fields
-            }
-        else:
+        # Try primary OCR
+        primary_result = self.ocr_provider.process_image(image_data)
+        
+        if not primary_result.success:
             return {
                 "ocr_available": True,
                 "ocr_success": False,
-                "error": result.error
+                "error": primary_result.error
             }
+        
+        parsed_fields = parser.parse(primary_result)
+        primary_provider = getattr(self.ocr_provider, 'name', 'primary')
+        
+        # Check for missing critical fields
+        missing_fields = [f for f in self.CRITICAL_FIELDS if f not in parsed_fields]
+        
+        if missing_fields and self.fallback_ocr_provider:
+            logger.warning(f"Primary OCR ({primary_provider}) missing fields: {missing_fields}")
+            logger.info("Trying fallback OCR to fill missing fields...")
+            
+            try:
+                # Run fallback OCR
+                fallback_result = self.fallback_ocr_provider.process_image(image_data)
+                fallback_provider = getattr(self.fallback_ocr_provider, 'name', 'fallback')
+                
+                if fallback_result.success:
+                    fallback_parsed = parser.parse(fallback_result)
+                    
+                    # Merge: fill in missing fields from fallback
+                    fields_filled = []
+                    for field in missing_fields:
+                        if field in fallback_parsed:
+                            parsed_fields[field] = fallback_parsed[field]
+                            fields_filled.append(field)
+                    
+                    if fields_filled:
+                        logger.info(f"Fallback OCR ({fallback_provider}) filled fields: {fields_filled}")
+                        parsed_fields["_fallback_fields"] = fields_filled
+                        parsed_fields["_fallback_provider"] = fallback_provider
+                    else:
+                        logger.warning(f"Fallback OCR ({fallback_provider}) also missing: {missing_fields}")
+                else:
+                    logger.warning(f"Fallback OCR failed: {fallback_result.error}")
+                    
+            except Exception as e:
+                logger.error(f"Fallback OCR error: {e}")
+        elif missing_fields:
+            logger.warning(f"Missing fields {missing_fields} but no fallback OCR configured")
+        
+        return {
+            "ocr_available": True,
+            "ocr_success": True,
+            "raw_text": primary_result.raw_text,
+            "parsed_fields": parsed_fields,
+            "primary_provider": primary_provider
+        }
     
     def read_all_data(self, card_number: str) -> Dict[str, Any]:
         """Read all data from Zairyu card with authentication."""

@@ -60,53 +60,58 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def create_ocr_provider():
+def create_ocr_providers():
     """
-    Create OCR provider for card text extraction.
-    
-    Priority:
-    1. PaddleOCR (best for Japanese)
-    2. EasyOCR (fallback)
+    Create OCR providers for card text extraction.
     
     Returns:
-        OCR provider instance or None if not available
+        Tuple of (primary_provider, fallback_provider)
+        - Primary: PaddleOCR (best for Japanese text)
+        - Fallback: EasyOCR (used when primary misses fields like nationality)
     """
-    # Try PaddleOCR first (better for Japanese)
+    primary_provider = None
+    fallback_provider = None
+    
+    # Try PaddleOCR as primary (better for Japanese text overall)
     try:
         from ocr import PaddleOCRProvider
-        # Fast configuration: disable slow features for quick startup
-        # Models will load on first OCR request
         provider = PaddleOCRProvider(
             preprocess=True,
             lang='japan',
-            use_doc_orientation_classify=False,  # Skip document orientation (slow)
-            use_doc_unwarping=False,              # Skip unwarping (slow)
-            use_textline_orientation=False,       # Skip textline orientation (slow)
+            use_doc_orientation_classify=False,
+            use_doc_unwarping=False,
+            use_textline_orientation=False,
         )
         if provider.is_available():
-            logger.info("OCR: PaddleOCR ready (models load on first use)")
-            return provider
+            logger.info("OCR: PaddleOCR ready as PRIMARY (models load on first use)")
+            primary_provider = provider
         else:
             logger.warning("OCR: PaddleOCR dependencies not available")
             logger.info(f"OCR: Install with: {provider.get_install_instructions()}")
     except ImportError as e:
         logger.warning(f"OCR: PaddleOCR module not available: {e}")
     
-    # Fallback to EasyOCR
+    # Try EasyOCR as fallback (sometimes better for specific fields)
     try:
         from ocr import EasyOCRProvider
         provider = EasyOCRProvider(languages=['ja', 'en'])
         if provider.is_available():
-            logger.info("OCR: Using EasyOCR provider (fallback)")
-            return provider
+            if primary_provider:
+                logger.info("OCR: EasyOCR ready as FALLBACK (for missing fields)")
+                fallback_provider = provider
+            else:
+                logger.info("OCR: EasyOCR ready as PRIMARY (PaddleOCR not available)")
+                primary_provider = provider
         else:
             logger.warning("OCR: EasyOCR dependencies not available")
             logger.info(f"OCR: Install with: {provider.get_install_instructions()}")
     except ImportError as e:
         logger.warning(f"OCR: EasyOCR module not available: {e}")
     
-    logger.warning("OCR: No OCR provider available")
-    return None
+    if not primary_provider:
+        logger.warning("OCR: No OCR provider available")
+    
+    return primary_provider, fallback_provider
 
 
 async def warmup_ocr_in_background(ocr_provider):
@@ -138,15 +143,21 @@ async def warmup_ocr_in_background(ocr_provider):
 async def main():
     """Main server entry point"""
     
-    # Create OCR provider (fast - no model loading yet)
-    ocr_provider = create_ocr_provider()
+    # Create OCR providers (fast - no model loading yet)
+    ocr_provider, fallback_ocr_provider = create_ocr_providers()
     
-    # Create bridge with OCR provider
-    bridge = NFCBridge(ocr_provider=ocr_provider)
+    # Create bridge with both OCR providers
+    bridge = NFCBridge(
+        ocr_provider=ocr_provider,
+        fallback_ocr_provider=fallback_ocr_provider
+    )
     
     # Determine OCR status message
     if ocr_provider:
-        ocr_status = f"{ocr_provider.name} (warming up in background)"
+        ocr_status = f"{ocr_provider.name}"
+        if fallback_ocr_provider:
+            ocr_status += f" + {fallback_ocr_provider.name} (fallback)"
+        ocr_status += " (warming up in background)"
     else:
         ocr_status = "Not available"
     

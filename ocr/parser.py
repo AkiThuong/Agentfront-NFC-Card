@@ -51,9 +51,27 @@ class ZairyuCardParser:
         'オーストラリア', 'オーストラリヤ', 'ニュージーランド',
         'ニューシーランド', 'ニュ一ジ一ランド', 'ニユージーランド',  # OCR variations
         'ニュージランド', 'ニューシランド',  # Missing vowel mark variations
+        'ニューード', 'ニュ一ド', 'ニューランド',  # Severely truncated OCR errors
         # Africa
         'ナイジェリア', 'ガーナ', 'エジプト',
     ]
+    
+    # Nationality normalization mapping (OCR errors -> correct name)
+    NATIONALITY_NORMALIZE = {
+        # New Zealand variations
+        'ニューード': 'ニュージーランド',
+        'ニュ一ド': 'ニュージーランド',
+        'ニューランド': 'ニュージーランド',
+        'ニューシーランド': 'ニュージーランド',
+        'ニュ一ジ一ランド': 'ニュージーランド',
+        'ニユージーランド': 'ニュージーランド',
+        'ニュージランド': 'ニュージーランド',
+        'ニューシランド': 'ニュージーランド',
+        # Vietnam variations
+        'ヴェトナム': 'ベトナム',
+        # Australia variations
+        'オーストラリヤ': 'オーストラリア',
+    }
     
     # Known residence status values (comprehensive list)
     RESIDENCE_STATUSES = [
@@ -664,8 +682,9 @@ class ZairyuCardParser:
             # Check against known nationalities
             for nationality in self.NATIONALITIES:
                 if nationality in text:
-                    logger.warning(f"  Position-based nationality found: '{nationality}' in '{text}' at y={y:.0f}, x={x:.0f}")
-                    return {"nationality": nationality}
+                    normalized = self.NATIONALITY_NORMALIZE.get(nationality, nationality)
+                    logger.warning(f"  Position-based nationality found: '{nationality}' -> '{normalized}' in '{text}' at y={y:.0f}, x={x:.0f}")
+                    return {"nationality": normalized}
             
             # Also log what we're checking for debugging
             logger.warning(f"  Checking block in zone: '{text}' at y={y:.0f}, x={x:.0f}")
@@ -707,8 +726,10 @@ class ZairyuCardParser:
                 # Extract nationality from same line
                 for nationality in self.NATIONALITIES:
                     if nationality in line:
-                        result["nationality"] = nationality
-                        logger.warning(f"  Nationality found in DOB line: {nationality}")
+                        # Normalize OCR variations to standard name
+                        normalized = self.NATIONALITY_NORMALIZE.get(nationality, nationality)
+                        result["nationality"] = normalized
+                        logger.warning(f"  Nationality found in DOB line: {nationality} -> {normalized}")
                         break
                 
                 # If nationality not in DOB line, check adjacent lines (DOB line ± 1)
@@ -719,8 +740,9 @@ class ZairyuCardParser:
                         prev_line = text_lines[i - 1]
                         for nationality in self.NATIONALITIES:
                             if nationality in prev_line:
-                                result["nationality"] = nationality
-                                logger.warning(f"  Nationality found in line {i-1} (before DOB): {nationality}")
+                                normalized = self.NATIONALITY_NORMALIZE.get(nationality, nationality)
+                                result["nationality"] = normalized
+                                logger.warning(f"  Nationality found in line {i-1} (before DOB): {nationality} -> {normalized}")
                                 break
                     
                     # Check line after DOB (if exists)
@@ -728,8 +750,9 @@ class ZairyuCardParser:
                         next_line = text_lines[i + 1]
                         for nationality in self.NATIONALITIES:
                             if nationality in next_line:
-                                result["nationality"] = nationality
-                                logger.warning(f"  Nationality found in line {i+1} (after DOB): {nationality}")
+                                normalized = self.NATIONALITY_NORMALIZE.get(nationality, nationality)
+                                result["nationality"] = normalized
+                                logger.warning(f"  Nationality found in line {i+1} (after DOB): {nationality} -> {normalized}")
                                 break
                 
                 break
@@ -740,8 +763,9 @@ class ZairyuCardParser:
             logger.warning(f"  Full text preview: {full_text[:200]}...")
             for nationality in self.NATIONALITIES:
                 if nationality in full_text:
-                    result["nationality"] = nationality
-                    logger.warning(f"  Nationality found in full text: {nationality}")
+                    normalized = self.NATIONALITY_NORMALIZE.get(nationality, nationality)
+                    result["nationality"] = normalized
+                    logger.warning(f"  Nationality found in full text: {nationality} -> {normalized}")
                     break
             if "nationality" not in result:
                 logger.warning(f"  Nationality NOT FOUND anywhere!")

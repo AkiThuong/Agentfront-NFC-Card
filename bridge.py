@@ -154,13 +154,15 @@ class NFCBridge:
     # This prevents card reading from blocking the WebSocket event loop
     _executor: Optional[ThreadPoolExecutor] = None
     
-    def __init__(self, ocr_provider=None):
+    def __init__(self, ocr_provider=None, fallback_ocr_provider=None):
         """
         Initialize NFC Bridge.
         
         Args:
-            ocr_provider: Optional OCR provider for card text extraction.
+            ocr_provider: Primary OCR provider for card text extraction.
                          If None, will try to use EasyOCR if available.
+            fallback_ocr_provider: Fallback OCR provider used when primary
+                         OCR misses critical fields like nationality.
         """
         self.state = BridgeState.IDLE
         self.connected_clients: Set = set()
@@ -173,7 +175,7 @@ class NFCBridge:
         # Initialize OCR result cache (speeds up re-reads of same card)
         self.ocr_cache = OCRResultCache(max_size=50, ttl_seconds=300)  # 5 min TTL
         
-        # Initialize OCR provider
+        # Initialize OCR providers
         if ocr_provider:
             self.ocr_provider = ocr_provider
         elif OCR_AVAILABLE:
@@ -181,10 +183,17 @@ class NFCBridge:
         else:
             self.ocr_provider = None
             logger.info("No OCR provider available")
+        
+        # Initialize fallback OCR provider (used when primary misses fields)
+        self.fallback_ocr_provider = fallback_ocr_provider
     
     def set_ocr_provider(self, provider):
         """Set OCR provider for text extraction"""
         self.ocr_provider = provider
+    
+    def set_fallback_ocr_provider(self, provider):
+        """Set fallback OCR provider (used when primary misses critical fields)"""
+        self.fallback_ocr_provider = provider
     
     async def run_blocking(self, func, *args, timeout: float = 60.0):
         """
@@ -847,7 +856,11 @@ class NFCBridge:
             conn = reader.createConnection()
             conn.connect()
             
-            zairyu_reader = ZairyuCardReader(conn, ocr_provider=self.ocr_provider)
+            zairyu_reader = ZairyuCardReader(
+                conn, 
+                ocr_provider=self.ocr_provider,
+                fallback_ocr_provider=self.fallback_ocr_provider
+            )
             
             if card_number:
                 if len(card_number) != 12:
@@ -1090,7 +1103,11 @@ class NFCBridge:
             conn = reader.createConnection()
             conn.connect()
             
-            zairyu_reader = ZairyuCardReader(conn, ocr_provider=self.ocr_provider)
+            zairyu_reader = ZairyuCardReader(
+                conn, 
+                ocr_provider=self.ocr_provider,
+                fallback_ocr_provider=self.fallback_ocr_provider
+            )
             
             logger.info(f"API: Reading Zairyu card with number {card_number[:4]}****{card_number[-2:]}")
             
