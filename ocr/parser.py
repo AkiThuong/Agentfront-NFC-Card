@@ -49,6 +49,8 @@ class ZairyuCardParser:
         'ロシア', 'ウクライナ', 'ポーランド',
         # Oceania
         'オーストラリア', 'オーストラリヤ', 'ニュージーランド',
+        'ニューシーランド', 'ニュ一ジ一ランド', 'ニユージーランド',  # OCR variations
+        'ニュージランド', 'ニューシランド',  # Missing vowel mark variations
         # Africa
         'ナイジェリア', 'ガーナ', 'エジプト',
     ]
