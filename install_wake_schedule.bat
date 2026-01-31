@@ -9,7 +9,7 @@ echo   PC Wake ^& Shutdown Schedule Installer
 echo ========================================
 echo.
 echo This will configure your PC to:
-echo   - Wake at 8:00 AM (Monday-Friday)
+echo   - Wake at 7:50 AM (Monday-Friday)
 echo   - Shutdown at 8:00 PM (Monday-Friday)
 echo.
 echo Press any key to continue...
@@ -39,7 +39,7 @@ echo.
 :: ========================================
 :: Create Wake PC Task (8:00 AM)
 :: ========================================
-echo Step 1: Creating Wake PC task for 8:00 AM...
+echo Step 1: Creating Wake PC task for 7:50 AM...
 echo.
 
 :: Remove existing task if exists
@@ -70,11 +70,11 @@ echo   Creating task XML at: %WAKE_TASK_XML%
 echo ^<?xml version="1.0" encoding="UTF-16"?^>
 echo ^<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"^>
 echo   ^<RegistrationInfo^>
-echo     ^<Description^>Wake PC for AgentFront at 8:00 AM^</Description^>
+echo     ^<Description^>Wake PC for AgentFront at 7:50 AM^</Description^>
 echo   ^</RegistrationInfo^>
 echo   ^<Triggers^>
 echo     ^<CalendarTrigger^>
-echo       ^<StartBoundary^>2024-01-01T08:00:00^</StartBoundary^>
+echo       ^<StartBoundary^>2024-01-01T07:50:00^</StartBoundary^>
 echo       ^<Enabled^>true^</Enabled^>
 echo       ^<ScheduleByWeek^>
 echo         ^<DaysOfWeek^>
@@ -236,7 +236,7 @@ echo ========================================
 echo   Scheduled Tasks Status
 echo ========================================
 echo.
-echo Wake Task (8:00 AM):
+echo Wake Task (7:50 AM):
 schtasks /query /tn "AgentFront_WakePC" /fo list 2>nul | findstr "TaskName Status Next"
 if %errorLevel% neq 0 echo   [NOT FOUND]
 echo.
@@ -250,7 +250,7 @@ echo   Installation Complete
 echo ========================================
 echo.
 echo Schedule:
-echo   - PC wakes at 8:00 AM (Mon-Fri)
+echo   - PC wakes at 7:50 AM (Mon-Fri)
 echo   - PC shuts down at 8:00 PM (Mon-Fri)
 echo.
 echo Note: Wake-to-run requires BIOS/UEFI wake timer support.
