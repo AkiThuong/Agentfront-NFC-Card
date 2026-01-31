@@ -118,6 +118,11 @@ echo.
 echo Removing helper files...
 echo.
 
+if exist "%SCRIPT_DIR%_wake_pc.bat" (
+    del "%SCRIPT_DIR%_wake_pc.bat"
+    echo   [OK] Removed _wake_pc.bat
+)
+
 if exist "%SCRIPT_DIR%_sleep_pc.bat" (
     del "%SCRIPT_DIR%_sleep_pc.bat"
     echo   [OK] Removed _sleep_pc.bat
