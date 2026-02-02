@@ -9,7 +9,7 @@ echo   PC Shutdown Schedule Installer
 echo ========================================
 echo.
 echo This will configure your PC to:
-echo   - Shutdown at 8:00 PM (Monday-Friday)
+echo   - Shutdown at 8:00 PM (Every day)
 echo.
 echo Press any key to continue...
 pause >nul
@@ -76,16 +76,9 @@ echo   ^<Triggers^>
 echo     ^<CalendarTrigger^>
 echo       ^<StartBoundary^>2024-01-01T20:00:00^</StartBoundary^>
 echo       ^<Enabled^>true^</Enabled^>
-echo       ^<ScheduleByWeek^>
-echo         ^<DaysOfWeek^>
-echo           ^<Monday /^>
-echo           ^<Tuesday /^>
-echo           ^<Wednesday /^>
-echo           ^<Thursday /^>
-echo           ^<Friday /^>
-echo         ^</DaysOfWeek^>
-echo         ^<WeeksInterval^>1^</WeeksInterval^>
-echo       ^</ScheduleByWeek^>
+echo       ^<ScheduleByDay^>
+echo         ^<DaysInterval^>1^</DaysInterval^>
+echo       ^</ScheduleByDay^>
 echo     ^</CalendarTrigger^>
 echo   ^</Triggers^>
 echo   ^<Principals^>
@@ -148,7 +141,7 @@ echo   Installation Complete
 echo ========================================
 echo.
 echo Schedule:
-echo   - PC shuts down at 8:00 PM (Mon-Fri)
+echo   - PC shuts down at 8:00 PM (Every day)
 echo.
 echo Users will get a 60-second warning before shutdown.
 echo.

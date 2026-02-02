@@ -16,13 +16,11 @@ import hashlib
 import json
 import logging
 import os
-import time
-from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from enum import Enum
 from functools import partial
-from typing import Optional, Set, Dict, Any, Tuple
+from typing import Optional, Set, Dict, Any
 
 try:
     import websockets
@@ -56,76 +54,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-class OCRResultCache:
-    """
-    Simple LRU cache for OCR results.
-    Caches OCR results by card number to speed up re-reads of the same card.
-    
-    Features:
-    - Time-based expiry (default 5 minutes)
-    - LRU eviction when max size reached
-    - Thread-safe for basic operations
-    """
-    
-    def __init__(self, max_size: int = 50, ttl_seconds: int = 300):
-        """
-        Args:
-            max_size: Maximum number of cached results
-            ttl_seconds: Time-to-live in seconds (default 5 minutes)
-        """
-        self._cache: OrderedDict[str, Tuple[float, Dict[str, Any]]] = OrderedDict()
-        self._max_size = max_size
-        self._ttl = ttl_seconds
-    
-    def _make_key(self, card_number: str, image_hash: str = "") -> str:
-        """Create cache key from card number and optional image hash"""
-        return f"{card_number}:{image_hash}" if image_hash else card_number
-    
-    def get(self, card_number: str, image_hash: str = "") -> Optional[Dict[str, Any]]:
-        """Get cached OCR result if available and not expired"""
-        key = self._make_key(card_number, image_hash)
-        
-        if key not in self._cache:
-            return None
-        
-        timestamp, result = self._cache[key]
-        
-        # Check if expired
-        if time.time() - timestamp > self._ttl:
-            del self._cache[key]
-            logger.debug(f"OCR cache expired for {card_number[:4]}****")
-            return None
-        
-        # Move to end (most recently used)
-        self._cache.move_to_end(key)
-        logger.info(f"OCR cache HIT for card {card_number[:4]}****")
-        return result
-    
-    def set(self, card_number: str, result: Dict[str, Any], image_hash: str = ""):
-        """Store OCR result in cache"""
-        key = self._make_key(card_number, image_hash)
-        
-        # Remove oldest if at capacity
-        while len(self._cache) >= self._max_size:
-            oldest_key = next(iter(self._cache))
-            del self._cache[oldest_key]
-            logger.debug(f"OCR cache evicted oldest entry")
-        
-        self._cache[key] = (time.time(), result)
-        logger.debug(f"OCR cache stored for card {card_number[:4]}****")
-    
-    def clear(self):
-        """Clear all cached results"""
-        self._cache.clear()
-        logger.info("OCR cache cleared")
-    
-    def stats(self) -> Dict[str, Any]:
-        """Get cache statistics"""
-        return {
-            "size": len(self._cache),
-            "max_size": self._max_size,
-            "ttl_seconds": self._ttl
-        }
+# OCR caching removed - always read fresh data from card to prevent stale data issues
 
 
 class CardType(Enum):
@@ -171,9 +100,6 @@ class NFCBridge:
         # Initialize thread pool executor for blocking operations
         if NFCBridge._executor is None:
             NFCBridge._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="nfc_reader")
-        
-        # Initialize OCR result cache (speeds up re-reads of same card)
-        self.ocr_cache = OCRResultCache(max_size=50, ttl_seconds=300)  # 5 min TTL
         
         # Initialize OCR providers
         if ocr_provider:
@@ -1218,28 +1144,15 @@ class NFCBridge:
                 "hint": "Example: AB12345678CD"
             }
         
-        # Check OCR cache first (instant if same card was read recently)
-        cached_result = self.ocr_cache.get(card_number)
-        if cached_result:
-            logger.info(f"Using cached OCR result for card {card_number[:4]}****")
-            # Update timestamp for cached result
-            cached_result["timestamp"] = datetime.now().isoformat()
-            cached_result["from_cache"] = True
-            return cached_result
-        
         try:
             # Run ALL blocking operations in thread pool (including card presence check)
             # This prevents blocking the event loop during polling
+            # Always read fresh data from card - no caching to prevent stale data issues
             result = await self.run_blocking(
                 self._blocking_read_zairyu, 
                 card_number,
                 timeout=90.0  # 90 second timeout for OCR processing
             )
-            
-            # Cache successful results with OCR data
-            if result.get("success") and result.get("authenticated"):
-                self.ocr_cache.set(card_number, result)
-                logger.info(f"Cached OCR result for card {card_number[:4]}****")
             
             return result
         except asyncio.TimeoutError:
