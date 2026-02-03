@@ -8,6 +8,10 @@ echo.
 echo This will configure the NFC Bridge Server to
 echo start automatically when Windows starts.
 echo.
+echo Features:
+echo   - PaddleOCR (primary) + EasyOCR (fallback)
+echo   - Reads Zairyu, My Number, CCCD, Suica cards
+echo.
 echo Method: Windows Task Scheduler (more reliable than Services)
 echo.
 

@@ -252,7 +252,7 @@ echo.
 python -c "import paddleocr" >nul 2>&1
 if %errorLevel% neq 0 (
     echo ========================================
-    echo   Installing PaddleOCR
+    echo   Installing PaddleOCR (Primary OCR)
     echo ========================================
     echo.
     echo This may take a few minutes...
@@ -292,8 +292,36 @@ if %errorLevel% neq 0 (
         echo PaddleOCR installed successfully!
     ) else (
         echo [WARNING] PaddleOCR may not be fully installed.
-        echo Trying EasyOCR fallback...
-        pip install torch torchvision easyocr --quiet 2>nul
+    )
+    echo.
+)
+
+:: Install EasyOCR as fallback OCR (for missing fields like nationality)
+python -c "import easyocr" >nul 2>&1
+if %errorLevel% neq 0 (
+    echo ========================================
+    echo   Installing EasyOCR (Fallback OCR)
+    echo ========================================
+    echo.
+    echo EasyOCR is used as backup when primary OCR misses fields.
+    echo This may take a few minutes...
+    echo.
+    
+    echo [1/2] Installing PyTorch...
+    pip install torch torchvision --quiet 2>nul
+    echo       Done
+    
+    echo [2/2] Installing EasyOCR...
+    pip install easyocr --quiet 2>nul
+    echo       Done
+    
+    echo.
+    python -c "import easyocr" >nul 2>&1
+    if !errorLevel! equ 0 (
+        echo EasyOCR installed successfully!
+    ) else (
+        echo [WARNING] EasyOCR installation failed.
+        echo Some fields like nationality may not be detected.
     )
     echo.
 )
@@ -320,6 +348,7 @@ echo.
 echo ========================================
 echo   Starting NFC Bridge Server
 echo   Port: 3005
+echo   OCR: PaddleOCR (primary) + EasyOCR (fallback)
 echo   Press Ctrl+C to stop
 echo ========================================
 echo.

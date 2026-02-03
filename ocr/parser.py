@@ -47,18 +47,22 @@ class ZairyuCardParser:
         # Europe
         '英国', 'イギリス', 'フランス', 'ドイツ', 'イタリア', 'スペイン',
         'ロシア', 'ウクライナ', 'ポーランド',
-        # Oceania
-        'オーストラリア', 'オーストラリヤ', 'ニュージーランド',
-        'ニューシーランド', 'ニュ一ジ一ランド', 'ニユージーランド',  # OCR variations
+        # Oceania - Australia variations
+        'オーストラリア', 'オーストラリヤ', 'オーストラリ', 'オーストラリフ',
+        'オーストララ', 'オーストラリ7', 'オ一ストラリア',  # OCR misreads
+        # Oceania - New Zealand variations
+        'ニュージーランド', 'ニューシーランド', 'ニュ一ジ一ランド', 'ニユージーランド',
         'ニュージランド', 'ニューシランド',  # Missing vowel mark variations
         'ニューード', 'ニュ一ド', 'ニューランド',  # Severely truncated OCR errors
+        'ニューーラド', 'ニューーラン', 'ニュ一ーラド',  # Additional PaddleOCR errors
+        'ニューシーラド', 'ニュージーラド', 'ニューラド',  # Missing characters
         # Africa
         'ナイジェリア', 'ガーナ', 'エジプト',
     ]
     
     # Nationality normalization mapping (OCR errors -> correct name)
     NATIONALITY_NORMALIZE = {
-        # New Zealand variations
+        # New Zealand variations (common PaddleOCR/EasyOCR errors)
         'ニューード': 'ニュージーランド',
         'ニュ一ド': 'ニュージーランド',
         'ニューランド': 'ニュージーランド',
@@ -67,10 +71,21 @@ class ZairyuCardParser:
         'ニユージーランド': 'ニュージーランド',
         'ニュージランド': 'ニュージーランド',
         'ニューシランド': 'ニュージーランド',
+        'ニューーラド': 'ニュージーランド',  # PaddleOCR common error
+        'ニューーラン': 'ニュージーランド',
+        'ニュ一ーラド': 'ニュージーランド',
+        'ニューシーラド': 'ニュージーランド',
+        'ニュージーラド': 'ニュージーランド',
+        'ニューラド': 'ニュージーランド',
         # Vietnam variations
         'ヴェトナム': 'ベトナム',
         # Australia variations
         'オーストラリヤ': 'オーストラリア',
+        'オーストラリ': 'オーストラリア',
+        'オーストラリフ': 'オーストラリア',
+        'オーストララ': 'オーストラリア',
+        'オーストラリ7': 'オーストラリア',
+        'オ一ストラリア': 'オーストラリア',  # Dash vs. long vowel mark
     }
     
     # Known residence status values (comprehensive list)
