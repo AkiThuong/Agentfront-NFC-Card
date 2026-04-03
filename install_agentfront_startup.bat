@@ -128,7 +128,7 @@ if "!AGENTFRONT_SHORTCUT!"=="" (
     echo   Example shortcut: C:\Users\YourName\Desktop\AgentFront.ai.lnk
     echo.
     set /p "AGENTFRONT_INPUT=URL or Path: "
-    
+
     :: Check if it's a URL or path
     echo !AGENTFRONT_INPUT! | findstr /i "http" >nul
     if !errorLevel! equ 0 (
@@ -162,32 +162,57 @@ echo   Creating: %LAUNCHER_VBS%
 :: Determine launch method
 if defined AGENTFRONT_URL (
     :: Launch Chrome with URL in kiosk mode
-    echo   Mode: Chrome Kiosk with URL
+    echo   Mode: Chrome Kiosk with URL (with retry)
     (
+    echo On Error Resume Next
     echo Set WshShell = CreateObject^("WScript.Shell"^)
+    echo Set fso = CreateObject^("Scripting.FileSystemObject"^)
     echo.
-    echo ' Launch Chrome in kiosk mode with AgentFront.ai
-    echo WshShell.Run """!CHROME_PATH!"" --kiosk --start-fullscreen ""!AGENTFRONT_URL!""", 1, False
+    echo ' Retry up to 6 times ^(~60s total^) if Chrome is not ready at boot
+    echo chromePath = "!CHROME_PATH!"
+    echo maxRetries = 6
+    echo.
+    echo For attempt = 1 To maxRetries
+    echo     If fso.FileExists^(chromePath^) Then
+    echo         WshShell.Run """" ^& chromePath ^& """ --kiosk --start-fullscreen ""!AGENTFRONT_URL!""", 1, False
+    echo         WScript.Sleep 3000
+    echo         ' Check if chrome.exe is running
+    echo         Set objWMI = GetObject^("winmgmts:\\.\root\cimv2"^)
+    echo         Set procs = objWMI.ExecQuery^("SELECT * FROM Win32_Process WHERE Name='chrome.exe'"^)
+    echo         If procs.Count ^> 0 Then Exit For
+    echo     End If
+    echo     ' Wait 10s before retrying
+    echo     WScript.Sleep 10000
+    echo Next
     echo.
     echo Set WshShell = Nothing
     ) > "%LAUNCHER_VBS%"
 ) else (
     :: Launch using existing shortcut, then fullscreen
-    echo   Mode: Shortcut with F11 fullscreen
+    echo   Mode: Shortcut with F11 fullscreen (with retry)
     (
+    echo On Error Resume Next
     echo Set WshShell = CreateObject^("WScript.Shell"^)
     echo.
-    echo ' Launch AgentFront.ai shortcut
-    echo WshShell.Run """!AGENTFRONT_SHORTCUT!""", 1, False
+    echo ' Retry up to 6 times ^(~60s total^) if Chrome is not ready at boot
+    echo maxRetries = 6
     echo.
-    echo ' Wait for app to load
-    echo WScript.Sleep 4000
-    echo.
-    echo ' Try to maximize and go full screen with F11
-    echo On Error Resume Next
-    echo WshShell.AppActivate "AgentFront"
-    echo WScript.Sleep 500
-    echo WshShell.SendKeys "{F11}"
+    echo For attempt = 1 To maxRetries
+    echo     WshShell.Run """!AGENTFRONT_SHORTCUT!""", 1, False
+    echo     WScript.Sleep 4000
+    echo     ' Check if chrome.exe is running
+    echo     Set objWMI = GetObject^("winmgmts:\\.\root\cimv2"^)
+    echo     Set procs = objWMI.ExecQuery^("SELECT * FROM Win32_Process WHERE Name='chrome.exe'"^)
+    echo     If procs.Count ^> 0 Then
+    echo         ' Chrome launched — go fullscreen
+    echo         WshShell.AppActivate "AgentFront"
+    echo         WScript.Sleep 500
+    echo         WshShell.SendKeys "{F11}"
+    echo         Exit For
+    echo     End If
+    echo     ' Wait 10s before retrying
+    echo     WScript.Sleep 10000
+    echo Next
     echo.
     echo Set WshShell = Nothing
     ) > "%LAUNCHER_VBS%"
@@ -252,7 +277,7 @@ echo   ^</RegistrationInfo^>
 echo   ^<Triggers^>
 echo     ^<LogonTrigger^>
 echo       ^<Enabled^>true^</Enabled^>
-echo       ^<Delay^>PT15S^</Delay^>
+echo       ^<Delay^>PT30S^</Delay^>
 echo     ^</LogonTrigger^>
 echo   ^</Triggers^>
 echo   ^<Principals^>
@@ -347,7 +372,7 @@ echo   Installation Complete
 echo ========================================
 echo.
 echo AgentFront.ai will:
-echo   - Launch automatically 15 seconds after Windows login
+echo   - Launch automatically 30 seconds after Windows login
 echo   - Open in full screen mode
 echo.
 if defined AGENTFRONT_URL (
