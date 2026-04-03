@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 
-title PC Shutdown Schedule Installer (8:15 PM Only)
+title PC Shutdown Schedule Installer (10:30 PM Only)
 
 echo.
 echo ========================================
@@ -9,7 +9,7 @@ echo   PC Shutdown Schedule Installer
 echo ========================================
 echo.
 echo This will configure your PC to:
-echo   - Shutdown at 8:15 PM (Every day)
+echo   - Shutdown at 10:30 PM (Every day)
 echo.
 echo Press any key to continue...
 pause >nul
@@ -38,7 +38,7 @@ echo.
 :: ========================================
 :: Create Shutdown PC Task (8:15 PM)
 :: ========================================
-echo Creating Shutdown PC task for 8:15 PM...
+echo Creating Shutdown PC task for 10:30 PM...
 echo.
 
 :: Remove existing task if exists
@@ -53,7 +53,7 @@ echo   Creating shutdown script at: %SHUTDOWN_SCRIPT%
 echo @echo off
 echo :: Give user 60 seconds warning before shutdown
 echo msg * "PC will shutdown in 60 seconds. Save your work!" 2^>nul
-echo shutdown /s /f /t 60 /c "Scheduled shutdown at 8:15 PM"
+echo shutdown /s /f /t 60 /c "Scheduled shutdown at 10:30 PM"
 ) > "%SHUTDOWN_SCRIPT%"
 
 if exist "%SHUTDOWN_SCRIPT%" (
@@ -70,11 +70,11 @@ echo   Creating task XML at: %SHUTDOWN_TASK_XML%
 echo ^<?xml version="1.0" encoding="UTF-16"?^>
 echo ^<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"^>
 echo   ^<RegistrationInfo^>
-echo     ^<Description^>Shutdown PC for AgentFront at 8:15 PM^</Description^>
+echo     ^<Description^>Shutdown PC for AgentFront at 10:30 PM^</Description^>
 echo   ^</RegistrationInfo^>
 echo   ^<Triggers^>
 echo     ^<CalendarTrigger^>
-echo       ^<StartBoundary^>2024-01-01T20:15:00^</StartBoundary^>
+echo       ^<StartBoundary^>2024-01-01T22:30:00^</StartBoundary^>
 echo       ^<Enabled^>true^</Enabled^>
 echo       ^<ScheduleByDay^>
 echo         ^<DaysInterval^>1^</DaysInterval^>
@@ -131,7 +131,7 @@ echo ========================================
 echo   Scheduled Task Status
 echo ========================================
 echo.
-echo Shutdown Task (8:15 PM):
+echo Shutdown Task (10:30 PM):
 schtasks /query /tn "AgentFront_ShutdownPC_815PM" /fo list 2>nul | findstr "TaskName Status Next"
 if %errorLevel% neq 0 echo   [NOT FOUND]
 echo.
@@ -141,7 +141,7 @@ echo   Installation Complete
 echo ========================================
 echo.
 echo Schedule:
-echo   - PC shuts down at 8:15 PM (Every day)
+echo   - PC shuts down at 10:30 PM (Every day)
 echo.
 echo Users will get a 60-second warning before shutdown.
 echo.
