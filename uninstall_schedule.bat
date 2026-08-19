@@ -12,6 +12,7 @@ echo This will remove all AgentFront scheduled tasks:
 echo   - Wake PC task (if exists)
 echo   - Sleep PC task (if exists)
 echo   - Shutdown PC task (if exists)
+echo   - Shutdown PC 5:45 AM task (if exists)
 echo   - Test Sleep PC task (if exists)
 echo   - Test Wake+Restart PC task (if exists)
 echo   - Official Wake+Restart task (if exists)
@@ -64,6 +65,14 @@ if %errorLevel% equ 0 (
 
 echo   Removing AgentFront_ShutdownPC...
 schtasks /delete /tn "AgentFront_ShutdownPC" /f >nul 2>&1
+if %errorLevel% equ 0 (
+    echo   [OK] Removed
+) else (
+    echo   [SKIP] Not found
+)
+
+echo   Removing AgentFront_ShutdownPC_545AM...
+schtasks /delete /tn "AgentFront_ShutdownPC_545AM" /f >nul 2>&1
 if %errorLevel% equ 0 (
     echo   [OK] Removed
 ) else (
@@ -146,6 +155,16 @@ if exist "%SCRIPT_DIR%_sleep_task.xml" (
 if exist "%SCRIPT_DIR%_shutdown_task.xml" (
     del "%SCRIPT_DIR%_shutdown_task.xml"
     echo   [OK] Removed _shutdown_task.xml
+)
+
+if exist "%SCRIPT_DIR%_shutdown_pc_545am.bat" (
+    del "%SCRIPT_DIR%_shutdown_pc_545am.bat"
+    echo   [OK] Removed _shutdown_pc_545am.bat
+)
+
+if exist "%SCRIPT_DIR%_shutdown_task_545am.xml" (
+    del "%SCRIPT_DIR%_shutdown_task_545am.xml"
+    echo   [OK] Removed _shutdown_task_545am.xml
 )
 
 if exist "%SCRIPT_DIR%_test_sleep_pc.bat" (
@@ -233,6 +252,12 @@ if %errorLevel% equ 0 (
 schtasks /query /tn "AgentFront_ShutdownPC" >nul 2>&1
 if %errorLevel% equ 0 (
     echo   [WARNING] AgentFront_ShutdownPC still exists!
+    set "FOUND=1"
+)
+
+schtasks /query /tn "AgentFront_ShutdownPC_545AM" >nul 2>&1
+if %errorLevel% equ 0 (
+    echo   [WARNING] AgentFront_ShutdownPC_545AM still exists!
     set "FOUND=1"
 )
 

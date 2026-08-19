@@ -277,7 +277,7 @@ echo   ^</RegistrationInfo^>
 echo   ^<Triggers^>
 echo     ^<LogonTrigger^>
 echo       ^<Enabled^>true^</Enabled^>
-echo       ^<Delay^>PT30S^</Delay^>
+echo       ^<Delay^>PT5S^</Delay^>
 echo     ^</LogonTrigger^>
 echo   ^</Triggers^>
 echo   ^<Principals^>
@@ -296,7 +296,7 @@ echo     ^<RunOnlyIfNetworkAvailable^>false^</RunOnlyIfNetworkAvailable^>
 echo     ^<AllowStartOnDemand^>true^</AllowStartOnDemand^>
 echo     ^<Enabled^>true^</Enabled^>
 echo     ^<Hidden^>false^</Hidden^>
-echo     ^<ExecutionTimeLimit^>PT1M^</ExecutionTimeLimit^>
+echo     ^<ExecutionTimeLimit^>PT5M^</ExecutionTimeLimit^>
 echo   ^</Settings^>
 echo   ^<Actions Context="Author"^>
 echo     ^<Exec^>
@@ -372,8 +372,8 @@ echo   Installation Complete
 echo ========================================
 echo.
 echo AgentFront.ai will:
-echo   - Launch automatically 30 seconds after Windows login
-echo   - Open in full screen mode
+echo   - Launch automatically 5 seconds after Windows login
+echo   - Open in full screen mode ^(retries up to ~60s if Chrome is not ready^)
 echo.
 if defined AGENTFRONT_URL (
 echo Launch URL: !AGENTFRONT_URL!
